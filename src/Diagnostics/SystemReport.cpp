@@ -1,5 +1,6 @@
 #include "Diagnostics/SystemReport.h"
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -8,6 +9,10 @@
 #endif
 #include <Windows.h>
 #include <winternl.h>
+#else
+#include <sys/utsname.h>
+#include <clocale>
+#endif
 
 #include <cstdint>
 #include <iomanip>
@@ -20,7 +25,9 @@
 #include "BML/BML.h"
 #include "CKRenderContext.h"
 #include "CKRenderManager.h"
+#if defined(_WIN32)
 #include "CryptoUtils.h"
+#endif
 #include "Hooks/HookLifecycle.h"
 #include "Loader/ModContext.h"
 #include "PathUtils.h"
@@ -33,7 +40,9 @@
 
 namespace BML::Diagnostics {
     namespace {
+#if defined(_WIN32)
         using RtlGetVersionFunction = LONG(WINAPI *)(PRTL_OSVERSIONINFOW);
+#endif
 
         const char *YesNo(bool value) {
             return value ? "yes" : "no";
@@ -61,6 +70,7 @@ namespace BML::Diagnostics {
         }
 
         std::string WindowsVersion() {
+#if defined(_WIN32)
             RTL_OSVERSIONINFOW version{};
             version.dwOSVersionInfoSize = sizeof(version);
             const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
@@ -74,11 +84,22 @@ namespace BML::Diagnostics {
             output << version.dwMajorVersion << '.' << version.dwMinorVersion
                    << " build " << version.dwBuildNumber;
             return output.str();
+#else
+            struct utsname info{};
+            return ::uname(&info) == 0
+                ? std::string(info.sysname) + " " + info.release
+                : "unknown";
+#endif
         }
 
         std::string ShortHash(const std::wstring &path) {
+#if defined(_WIN32)
             const std::string hash = utils::Sha256FileHex(path);
             return hash.empty() ? "unavailable" : hash.substr(0, 12);
+#else
+            (void) path;
+            return "unavailable";
+#endif
         }
 
         struct InstallFingerprint {
@@ -119,10 +140,15 @@ namespace BML::Diagnostics {
         }
 
         std::string LocaleName() {
+#if defined(_WIN32)
             wchar_t name[LOCALE_NAME_MAX_LENGTH]{};
             if (::GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) <= 0)
                 return "unknown";
             return utils::Utf16ToUtf8(name);
+#else
+            const char *name = std::setlocale(LC_ALL, nullptr);
+            return name && *name ? name : "unknown";
+#endif
         }
 
         std::string DriverText(const char *text) {
@@ -215,8 +241,13 @@ namespace BML::Diagnostics {
             SystemReportData data;
             data.Runtime.Windows = WindowsVersion();
             data.Locale.Name = LocaleName();
+#if defined(_WIN32)
             data.Locale.AnsiCodePage = ::GetACP();
             data.Locale.KeyboardLayout = reinterpret_cast<std::uintptr_t>(::GetKeyboardLayout(0));
+#else
+            data.Locale.AnsiCodePage = 65001;
+            data.Locale.KeyboardLayout = 0;
+#endif
             data.Install = GetInstallFingerprint(context.GetDirectory(BML_DIR_GAME));
 
             CKRenderContext *renderContext = context.GetRenderContext();
@@ -237,12 +268,16 @@ namespace BML::Diagnostics {
                 data.Renderer.TextureMaxHeight = driver->Caps3D.MaxTextureHeight;
             }
             if (renderContext) {
-                const HWND window = static_cast<HWND>(renderContext->GetWindowHandle());
                 data.Renderer.DisplayAvailable = true;
                 data.Renderer.Width = renderContext->GetWidth();
                 data.Renderer.Height = renderContext->GetHeight();
                 data.Renderer.Fullscreen = renderContext->IsFullScreen() != FALSE;
+#if defined(_WIN32)
+                const HWND window = static_cast<HWND>(renderContext->GetWindowHandle());
                 data.Renderer.Dpi = window ? ::GetDpiForWindow(window) : 0;
+#else
+                data.Renderer.Dpi = 0;
+#endif
             }
 
             if (const UI::FontRuntime *fonts = context.GetUiFontRuntime()) {

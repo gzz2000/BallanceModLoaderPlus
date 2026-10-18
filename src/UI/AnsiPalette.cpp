@@ -12,6 +12,17 @@
 #include "StringUtils.h"
 #include "IniFile.h"
 
+namespace {
+FILE *OpenWideFile(const std::wstring &path, const char *mode) {
+#if defined(_WIN32)
+    const std::wstring wideMode = utils::Utf8ToUtf16(mode);
+    return _wfopen(path.c_str(), wideMode.c_str());
+#else
+    return std::fopen(utils::Utf16ToUtf8(path).c_str(), mode);
+#endif
+}
+}
+
 AnsiPalette::AnsiPalette() : m_Initialized(false), m_Active(false) {
     for (int i = 0; i < 256; ++i) {
         m_Palette[i] = IM_COL32_WHITE;
@@ -94,15 +105,11 @@ std::wstring AnsiPalette::GetLoaderDirW() const {
 }
 
 std::wstring AnsiPalette::GetFilePathW() const {
-    std::wstring path = GetLoaderDirW();
-    path.append(L"\\palette.ini");
-    return path;
+    return utils::CombinePathW(GetLoaderDirW(), L"palette.ini");
 }
 
 std::wstring AnsiPalette::GetThemesDirW() const {
-    std::wstring path = GetLoaderDirW();
-    path.append(L"\\Themes");
-    return path;
+    return utils::CombinePathW(GetLoaderDirW(), L"Themes");
 }
 
 void AnsiPalette::BuildDefault() {
@@ -635,7 +642,7 @@ void AnsiPalette::EnsureInitialized() {
     // Load theme chain + overrides if file exists (chain supports nested base references)
     std::wstring path = GetFilePathW();
     if (utils::FileExistsW(path)) {
-        FILE *fp = _wfopen(path.c_str(), L"rb");
+        FILE *fp = OpenWideFile(path, "rb");
         if (fp) {
             fseek(fp, 0, SEEK_END);
             long len = ftell(fp);
@@ -666,7 +673,7 @@ bool AnsiPalette::ReloadFromFile() {
         m_Initialized = true; // still initialized, only defaults
         return false;
     }
-    FILE *fp = _wfopen(path.c_str(), L"rb");
+    FILE *fp = OpenWideFile(path, "rb");
     if (!fp) {
         m_Initialized = true;
         return false;
@@ -699,7 +706,7 @@ bool AnsiPalette::SaveSampleIfMissing() {
     std::wstring dir = GetLoaderDirW();
     if (!utils::DirectoryExistsW(dir)) utils::CreateDirectoryW(dir);
     if (!utils::FileExistsW(path)) {
-        FILE *fp = _wfopen(path.c_str(), L"wb");
+        FILE *fp = OpenWideFile(path, "wb");
         if (!fp) return false;
         const char *sample =
             "# palette.ini\n"
@@ -741,11 +748,11 @@ bool AnsiPalette::SaveSampleIfMissing() {
     std::wstring themesDir = GetThemesDirW();
     if (!utils::DirectoryExistsW(themesDir)) utils::CreateDirectoryW(themesDir);
     auto write_theme_if_missing = [&](const wchar_t *name, const char *content) {
-        std::wstring p = themesDir;
-        p.append(L"\\");
-        p.append(name).append(L".ini");
+        std::wstring filename(name);
+        filename.append(L".ini");
+        const std::wstring p = utils::CombinePathW(themesDir, filename);
         if (!utils::FileExistsW(p)) {
-            FILE *f = _wfopen(p.c_str(), L"wb");
+            FILE *f = OpenWideFile(p, "wb");
             if (!f) return;
             fwrite(content, 1, strlen(content), f);
             fclose(f);
@@ -839,7 +846,7 @@ std::wstring AnsiPalette::ResolveThemePathW(const std::wstring &name) const {
     std::wstring themes = GetThemesDirW();
     std::wstring cand;
     auto try_name = [&](const std::wstring &fn) -> bool {
-        cand = themes + L"\\" + fn;
+        cand = utils::CombinePathW(themes, fn);
         return utils::FileExistsW(cand);
     };
     // If an explicit extension is provided, only accept .ini and .theme
@@ -907,7 +914,7 @@ void AnsiPalette::ApplyThemeChainAndBuffer(const std::string &buf) {
                 return;
             }
             visited.insert(themePath);
-            FILE *ft = _wfopen(themePath.c_str(), L"rb");
+            FILE *ft = OpenWideFile(themePath, "rb");
             if (!ft) return;
             fseek(ft, 0, SEEK_END);
             long tlen = ftell(ft);

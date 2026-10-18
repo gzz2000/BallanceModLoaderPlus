@@ -6,17 +6,19 @@
 #include <filesystem>
 #include <sstream>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
 
 #include <MinHook.h>
+#endif
 
 namespace BML::Behavior::Internal {
 namespace {
 
-using RemoveDeclaration = CKERROR(__cdecl *)(CKObjectDeclaration *);
+using RemoveDeclaration = CKERROR (*)(CKObjectDeclaration *);
 
 constexpr std::size_t kRetirementCapacity = 64;
 std::array<std::atomic<std::uint64_t>, kRetirementCapacity> g_Retirements{};
@@ -50,7 +52,7 @@ void RecordRetirement(CKGUID guid) noexcept {
     g_RetirementOverflow.store(true, std::memory_order_release);
 }
 
-CKERROR __cdecl RemoveDeclarationHook(CKObjectDeclaration *declaration) {
+CKERROR RemoveDeclarationHook(CKObjectDeclaration *declaration) {
     const CKGUID guid = declaration ? declaration->GetGuid() : CKGUID();
     const CKERROR result = g_RemoveDeclaration
         ? g_RemoveDeclaration(declaration) : CKERR_INVALIDOBJECT;
@@ -101,6 +103,14 @@ bool HasFlag(CKDWORD value, CKDWORD flag) noexcept {
 class CKPrototypeSource final : public PrototypeSource {
 public:
     explicit CKPrototypeSource(CKContext *context) : m_Context(context) {
+#if defined(BML_NATIVE_BALLANCED)
+        // Ballanced is linked as native code, so the Windows MinHook based
+        // CKRemovePrototypeDeclaration interception is neither available nor
+        // necessary. PrototypeCatalog polls the native declaration registry
+        // and fingerprints every provider instead.
+        m_TracksRetirement = true;
+#endif
+#if defined(_WIN32)
         HMODULE ck2 = ::GetModuleHandleA("CK2.dll");
         g_RemoveTarget = ck2 ? reinterpret_cast<void *>(::GetProcAddress(
             ck2, "?CKRemovePrototypeDeclaration@@YAJPAVCKObjectDeclaration@@@Z"))
@@ -119,15 +129,18 @@ public:
             return;
         }
         m_TracksRetirement = true;
+#endif
     }
 
     ~CKPrototypeSource() override {
+#if defined(_WIN32)
         if (m_TracksRetirement && g_RemoveTarget) {
             MH_DisableHook(g_RemoveTarget);
             MH_RemoveHook(g_RemoveTarget);
         }
         g_RemoveDeclaration = nullptr;
         g_RemoveTarget = nullptr;
+#endif
     }
 
     Status ReadDeclarations(std::vector<PrototypeInfo> &out) override {

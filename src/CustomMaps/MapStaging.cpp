@@ -1,9 +1,15 @@
 #include "CustomMaps/MapStaging.h"
 
+#include <chrono>
+#include <cwchar>
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <utility>
 
@@ -19,9 +25,16 @@ constexpr wchar_t StagingRootName[] = L"BMLPlus.Staging";
 
 std::wstring MakeSessionName() {
     wchar_t name[48]{};
+#if defined(_WIN32)
     _snwprintf(name, sizeof(name) / sizeof(name[0]), L"%08lX-%016llX",
                static_cast<unsigned long>(::GetCurrentProcessId()),
                static_cast<unsigned long long>(::GetTickCount64()));
+#else
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::swprintf(name, sizeof(name) / sizeof(name[0]), L"%08lX-%016llX",
+                  static_cast<unsigned long>(::getpid()),
+                  static_cast<unsigned long long>(ticks));
+#endif
     name[(sizeof(name) / sizeof(name[0])) - 1] = L'\0';
     return name;
 }
@@ -29,10 +42,7 @@ std::wstring MakeSessionName() {
 bool DeleteOwnedFile(const std::wstring &path) {
     if (path.empty())
         return true;
-    if (::DeleteFileW(path.c_str()) == TRUE)
-        return true;
-    const DWORD error = ::GetLastError();
-    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    return !utils::FileExistsW(path) || utils::DeleteFileW(path);
 }
 
 }
@@ -45,11 +55,18 @@ void MapStaging::Initialize(const std::wstring &gameDirectory,
                             const std::wstring &tempDirectory) {
     Shutdown();
 
-    const std::wstring binDirectory = utils::CombinePathW(gameDirectory, L"Bin");
     m_TempDirectory = tempDirectory;
+#if defined(_WIN32)
+    const std::wstring binDirectory = utils::CombinePathW(gameDirectory, L"Bin");
     m_RootDirectory = utils::CombinePathW(binDirectory, StagingRootName);
     m_RelativeDirectory = utils::CombinePathW(StagingRootName, MakeSessionName());
     m_SessionDirectory = utils::CombinePathW(binDirectory, m_RelativeDirectory);
+#else
+    (void) gameDirectory;
+    m_RootDirectory = utils::CombinePathW(tempDirectory, StagingRootName);
+    m_SessionDirectory = utils::CombinePathW(m_RootDirectory, MakeSessionName());
+    m_RelativeDirectory.clear();
+#endif
 }
 
 void MapStaging::Shutdown() {
@@ -62,10 +79,10 @@ void MapStaging::Shutdown() {
     for (const std::wstring &file : m_RetainedFiles)
         DeleteOwnedFile(file);
     m_RetainedFiles.clear();
-    if (!m_SessionDirectory.empty())
-        ::RemoveDirectoryW(m_SessionDirectory.c_str());
-    if (!m_RootDirectory.empty())
-        ::RemoveDirectoryW(m_RootDirectory.c_str());
+    if (!m_SessionDirectory.empty() && utils::DirectoryExistsW(m_SessionDirectory))
+        utils::DeleteDirectoryW(m_SessionDirectory);
+    if (!m_RootDirectory.empty() && utils::DirectoryExistsW(m_RootDirectory))
+        utils::DeleteDirectoryW(m_RootDirectory);
 
     m_TempDirectory.clear();
     m_RootDirectory.clear();
@@ -92,8 +109,13 @@ bool MapStaging::Prepare(const std::wstring &sourcePath, std::uint64_t attempt,
     }
 
     const std::wstring extension = utils::GetExtensionW(sourcePath);
+#if defined(_WIN32)
     if (_wcsicmp(extension.c_str(), L".nmo") != 0 &&
         _wcsicmp(extension.c_str(), L".cmo") != 0) {
+#else
+    if (wcscasecmp(extension.c_str(), L".nmo") != 0 &&
+        wcscasecmp(extension.c_str(), L".cmo") != 0) {
+#endif
         error = "only .nmo and .cmo maps can be staged";
         return false;
     }

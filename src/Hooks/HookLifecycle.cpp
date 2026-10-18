@@ -14,6 +14,16 @@ HookLifecycle::~HookLifecycle() {
 }
 
 bool HookLifecycle::Attach(CKInputManager *inputManager) {
+#if defined(BML_NATIVE_BALLANCED)
+    (void) inputManager;
+    if (OwnsObjectLoad() || OwnsPhysicalize())
+        return OwnsObjectLoad() && OwnsPhysicalize();
+    if (!AttachObjectLoad() || !AttachPhysicalize()) {
+        Detach();
+        return false;
+    }
+    return true;
+#else
     if (m_Input || OwnsObjectLoad() || OwnsPhysicsPostProcess() || OwnsPhysicalize())
         return m_Input && InputHookOwnsActive(*m_Input) && OwnsObjectLoad() && OwnsPhysicalize();
 
@@ -27,6 +37,7 @@ bool HookLifecycle::Attach(CKInputManager *inputManager) {
         return false;
     }
     return true;
+#endif
 }
 
 bool HookLifecycle::Detach() {

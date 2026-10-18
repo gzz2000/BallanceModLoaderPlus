@@ -3,9 +3,9 @@
 #include "Imc/ImcRuntime.h"
 #include "Loader/ModContext.h"
 
-#include <intrin.h>
 #include <new>
 #include <string>
+#include "Platform/ReturnAddress.h"
 
 namespace {
 
@@ -30,7 +30,7 @@ int GuardImc(Function &&function) noexcept {
 
 BML_EXPORT int BML_CDECL BML_Imc_OpenClient(const char *ownerId,
                                              BML_ImcClient *outClient) {
-    const void *callerReturnAddress = _ReturnAddress();
+    const void *callerReturnAddress = BML_RETURN_ADDRESS();
     return GuardImc([&, callerReturnAddress] {
         if (!outClient)
             return BML_ERROR_INVALID_PARAMETER;

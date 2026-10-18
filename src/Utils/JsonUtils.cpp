@@ -1,11 +1,15 @@
 #include "JsonUtils.h"
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#endif
 
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <utility>
 
 #include "StringUtils.h"
@@ -75,6 +79,7 @@ namespace utils {
 
     JsonDocument JsonDocument::ParseFile(const std::wstring &path, std::string &error) {
         error.clear();
+#if defined(_WIN32)
         HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) {
             error = "Unable to open JSON file";
@@ -95,6 +100,20 @@ namespace utils {
             error = "Unable to read JSON file";
             return {};
         }
+#else
+        const std::string utf8Path = Utf16ToUtf8(path);
+        std::ifstream file(utf8Path, std::ios::binary);
+        if (!file) {
+            error = "Unable to open JSON file";
+            return {};
+        }
+        std::string content((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
+        if (!file.good() && !file.eof()) {
+            error = "Unable to read JSON file";
+            return {};
+        }
+#endif
         return Parse(content, error);
     }
 

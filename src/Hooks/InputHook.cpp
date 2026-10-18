@@ -612,7 +612,7 @@ CKBOOL InputHook::IsKeyToggled(CKDWORD iKey, CKDWORD *oStamp) {
 
 void InputHook::GetKeyName(CKDWORD iKey, CKSTRING oKeyName) {
     if (!IsValid()) return;
-    Impl::s_InputManager->GetKeyName(iKey, oKeyName);
+    Impl::s_InputManager->GetKeyName(iKey, const_cast<char *>(oKeyName));
 }
 
 CKDWORD InputHook::GetKeyFromName(CKSTRING iKeyName) {

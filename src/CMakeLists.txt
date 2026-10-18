@@ -419,6 +419,19 @@ set(BML_UI_SOURCES
         UI/Gui/Text.cpp
 )
 
+if (NOT WIN32)
+    list(REMOVE_ITEM BML_UI_SOURCES
+        UI/Ime/Runtime.cpp
+        UI/Ime/Tsf.cpp
+        UI/OverlayPlatformInput.cpp
+    )
+    list(APPEND BML_UI_SOURCES
+        UI/Ime/RuntimePosix.cpp
+        UI/Ime/TsfPosix.cpp
+        UI/OverlayPlatformInputPosix.cpp
+    )
+endif ()
+
 set(BML_HOOK_PRIVATE_HEADERS
         Hooks/BehaviorFunctionPatch.h
         Hooks/CKRasterizer.h
@@ -441,6 +454,18 @@ set(BML_HOOK_SOURCES
         Hooks/RenderHook.cpp
         Hooks/VTablePatch.cpp
 )
+
+if (NOT WIN32)
+    list(REMOVE_ITEM BML_HOOK_SOURCES
+        Hooks/RenderHook.cpp
+        Hooks/VTablePatch.cpp
+    )
+    list(APPEND BML_HOOK_SOURCES
+        Hooks/RenderHookPosix.cpp
+        Hooks/VTablePatchPosix.cpp
+        Utils/HookUtilsPosix.cpp
+    )
+endif ()
 
 set(BML_BEHAVIOR_PRIVATE_HEADERS
         Behavior/Core/Hash.h
@@ -570,12 +595,14 @@ set(BML_SOURCES
         ${BML_UI_SOURCES}
         ${BML_HOOK_SOURCES}
         ${BML_BEHAVIOR_SOURCES}
-        BML.rc
 )
 
-set_source_files_properties(BML.rc PROPERTIES
-        OBJECT_DEPENDS "${BML_BUILD_VERSION_HEADER}"
-)
+if (WIN32)
+    list(APPEND BML_SOURCES BML.rc)
+    set_source_files_properties(BML.rc PROPERTIES
+            OBJECT_DEPENDS "${BML_BUILD_VERSION_HEADER}"
+    )
+endif ()
 
 # Keep the script command in both builds so the disabled variant can report why it is unavailable.
 set(BML_ANGELSCRIPT_PRIVATE_HEADERS
@@ -713,7 +740,6 @@ set(IMGUI_HEADERS
         ${IMGUI_SOURCE_DIR}/imstb_rectpack.h
         ${IMGUI_SOURCE_DIR}/imstb_textedit.h
         ${IMGUI_SOURCE_DIR}/imstb_truetype.h
-        ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.h
         ${IMGUI_SOURCE_DIR}/misc/cpp/imgui_stdlib.h
         ${CMAKE_CURRENT_SOURCE_DIR}/UI/imgui_impl_ck2.h
 )
@@ -724,10 +750,18 @@ set(IMGUI_SOURCES
         ${IMGUI_SOURCE_DIR}/imgui_widgets.cpp
         ${IMGUI_SOURCE_DIR}/imgui_demo.cpp
         ${IMGUI_SOURCE_DIR}/imgui_tables.cpp
-        ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.cpp
         ${IMGUI_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/UI/imgui_impl_ck2.cpp
 )
+
+if (WIN32)
+    list(APPEND IMGUI_HEADERS ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.h)
+    list(APPEND IMGUI_SOURCES ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
+else ()
+    find_package(SDL3 CONFIG REQUIRED)
+    list(APPEND IMGUI_HEADERS ${IMGUI_SOURCE_DIR}/backends/imgui_impl_sdl3.h)
+    list(APPEND IMGUI_SOURCES ${IMGUI_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp)
+endif ()
 
 add_library(BML SHARED
         ${BML_SOURCES} ${BML_PUBLIC_HEADERS} ${BML_PRIVATE_HEADERS}
@@ -769,9 +803,14 @@ target_link_libraries(BML
         PUBLIC
         VirtoolsSDK::CK2 VirtoolsSDK::VxMath
         PRIVATE
-        BMLUtils
-        minhook onig imm32 comctl32 ole32 oleaut32 uuid
+        BMLUtils onig
 )
+
+if (WIN32)
+    target_link_libraries(BML PRIVATE minhook imm32 comctl32 ole32 oleaut32 uuid)
+else ()
+    target_link_libraries(BML PRIVATE SDL3::SDL3)
+endif ()
 
 add_dependencies(BML BML_BuildVersionHeader)
 
@@ -781,7 +820,9 @@ target_compile_definitions(BML
         "$<INSTALL_INTERFACE:IMGUI_USER_CONFIG=\"BMLImGuiConfig.h\">"
         PRIVATE
         BML_EXPORTS IMGUI_EXPORT
-        _WIN32_WINNT=0x0A00 WINVER=0x0A00
+        $<$<PLATFORM_ID:Windows>:_WIN32_WINNT=0x0A00>
+        $<$<PLATFORM_ID:Windows>:WINVER=0x0A00>
+        BML_NATIVE_BALLANCED=$<BOOL:${BML_BALLANCED_ROOT}>
         BML_ENABLE_ANGELSCRIPT=$<BOOL:${BML_WITH_ANGELSCRIPT}>
         BML_ENABLE_BEHAVIOR_TEST_INTERFACE=$<BOOL:${BML_ENABLE_BEHAVIOR_TEST_INTERFACE}>
         BML_ENABLE_UI_AUTOMATION=$<BOOL:${BML_BUILD_UI_AUTOMATION}>

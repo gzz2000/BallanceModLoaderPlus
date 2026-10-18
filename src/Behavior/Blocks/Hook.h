@@ -75,10 +75,16 @@ private:
 class Hook final {
 public:
     struct Identity {
-        std::uintptr_t State = 0;
-        std::uintptr_t Retain = 0;
-        std::uintptr_t Release = 0;
-        std::uintptr_t Invoke = 0;
+        std::uintptr_t State;
+        std::uintptr_t Retain;
+        std::uintptr_t Release;
+        std::uintptr_t Invoke;
+
+        constexpr Identity() noexcept
+            : State(0), Retain(0), Release(0), Invoke(0) {}
+        constexpr Identity(std::uintptr_t state, std::uintptr_t retain,
+                           std::uintptr_t release, std::uintptr_t invoke) noexcept
+            : State(state), Retain(retain), Release(release), Invoke(invoke) {}
 
         [[nodiscard]] explicit operator bool() const noexcept {
             return State || Retain || Release || Invoke;

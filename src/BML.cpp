@@ -1,15 +1,21 @@
-﻿#ifndef WIN32_LEAN_AND_MEAN
+﻿#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
 
 #include <MinHook.h>
+#endif
+
+#include <cstdio>
 
 #include "CKContext.h"
 
 #include "Behavior/Blocks/HookBlock.h"
 #include "Loader/ModManager.h"
+#if defined(_WIN32)
 #include "HookUtils.h"
+#endif
 
 CKERROR CreateModManager(CKContext *context) {
     new ModManager(context);
@@ -59,12 +65,32 @@ PLUGIN_EXPORT void RegisterBehaviorDeclarations(XObjectDeclarationArray *reg);
 
 void RegisterBehaviorDeclarations(XObjectDeclarationArray *reg) {
     if (!EnsureProcessHooks()) {
+#if defined(_WIN32)
         utils::OutputDebugA("Fatal: Unable to initialize BML process hooks.\n");
+#else
+        std::fputs("Fatal: Unable to initialize BML process hooks.\n", stderr);
+#endif
         return;
     }
     BML::Behavior::Internal::HookBlock::Register(reg);
 }
 
+#if !defined(_WIN32)
+// Ballanced implements CreateCKBehaviorPrototype and its runtime alias with
+// identical native code. The legacy Windows MinHook redirection is therefore
+// both unnecessary and invalid on macOS arm64.
+static bool EnsureProcessHooks() {
+    return true;
+}
+
+static CKERROR RetainProcessHooks(CKContext *) {
+    return CK_OK;
+}
+
+static CKERROR ReleaseProcessHooks(CKContext *) {
+    return CK_OK;
+}
+#else
 static LPVOID g_CreateCKBehaviorPrototypeRunTimeTarget = nullptr;
 static bool g_CreateCKBehaviorPrototypeRunTimeEnabled = false;
 static bool g_MinHookOwned = false;
@@ -189,3 +215,4 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID) {
 
     return TRUE;
 }
+#endif

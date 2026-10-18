@@ -259,11 +259,11 @@ private:
     static bool ReadString(CKDataArray *array, int row, int column, std::string &outValue) {
         if (!HasCell(array, row, column))
             return false;
-        const int required = array->GetElementStringValue(row, column, nullptr);
+        const int required = array->GetElementStringValue(row, column, nullptr, 0);
         if (required <= 0)
             return false;
         std::vector<char> buffer(static_cast<size_t>(required), '\0');
-        if (array->GetElementStringValue(row, column, buffer.data()) <= 0)
+        if (array->GetElementStringValue(row, column, buffer.data(), required) <= 0)
             return false;
         outValue = buffer.data();
         return true;

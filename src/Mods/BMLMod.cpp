@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <cstdlib>
 #include <vector>
 
 #include "BML/Bui.h"
@@ -35,9 +36,19 @@ namespace Behavior = BML::Behavior;
 
 namespace {
 constexpr std::size_t GameFontRoleCount = static_cast<std::size_t>(BML::GameFont::Count);
-constexpr unsigned long GameFontAcquireDelay = 1;
+constexpr CKDWORD GameFontAcquireDelay = 1;
 
 using BoundGameFontRoles = std::bitset<GameFontRoleCount>;
+
+bool NativeDiagnosticDisabled(const char *name) {
+#if defined(BML_NATIVE_BALLANCED)
+    const char *value = std::getenv(name);
+    return value && value[0] != '\0' && value[0] != '0';
+#else
+    (void)name;
+    return false;
+#endif
+}
 
 void SetChoiceEditor(IProperty *property,
                      const std::vector<std::string> &choices) {
@@ -187,7 +198,8 @@ void BMLMod::OnLoad() {
     } else {
         GetLogger()->Error("Built-in Custom Maps requires the loader runtime context");
     }
-    m_GameEventHooks.OnLoad(*m_BML, *GetLogger());
+    if (!NativeDiagnosticDisabled("BML_NATIVE_DISABLE_GAME_EVENTS"))
+        m_GameEventHooks.OnLoad(*m_BML, *GetLogger());
     m_GameplayTweaks.OnLoad(*m_BML, *GetLogger());
     m_Console.OnLoad(*m_BML, BML_GetModContext()->GetCommandContext(), *GetLogger());
     m_HUD.OnLoad(*m_BML);
@@ -244,13 +256,55 @@ void BMLMod::OnLoadScript(const char *filename, CKBehavior *script) {
     if (!strcmp(script->GetName(), "Menu_Init"))
         OnEditScript_Menu_MenuInit(script);
 
-    if (!strcmp(script->GetName(), "Menu_Options"))
+    if (!strcmp(script->GetName(), "Menu_Options") &&
+        !NativeDiagnosticDisabled("BML_NATIVE_DISABLE_MODS_ENTRY"))
         m_ModsMenuEntry.Load(m_Behavior, script, *m_BML, *GetLogger());
 }
 
 void BMLMod::OnProcess() {
+    // Opt-in lockstep probe. CKContext invokes every manager PreProcess
+    // (including SdlInputManager's keyboard sample) exactly once before the
+    // behavior graph and this callback exactly once after it. Therefore the
+    // callback ordinal and MainTickCount both independently measure the number
+    // of keyboard samples between two Energy.Points changes.
+    static const bool traceLockstep = std::getenv("BALLANCE_LOCKSTEP_TRACE") != nullptr;
+    static unsigned long long processOrdinal = 0;
+    static unsigned long long previousPointOrdinal = 0;
+    static CKDWORD previousPointTick = 0;
+    static int previousPoints = 0;
+    static bool havePreviousPoints = false;
+    ++processOrdinal;
+    if (traceLockstep) {
+        BML_GameplayEnergyState energy{};
+        ModContext *context = GetRuntimeContext();
+        if (context && ReadBuiltinGameplayEnergy(*context, energy) == BML_OK) {
+            const CKDWORD tick = m_TimeManager->GetMainTickCount();
+            if (!havePreviousPoints) {
+                previousPoints = energy.Points;
+                previousPointOrdinal = processOrdinal;
+                previousPointTick = tick;
+                havePreviousPoints = true;
+                GetLogger()->Info("LOCKSTEP baseline points=%d process=%llu tick=%u",
+                                  energy.Points, processOrdinal, tick);
+            } else if (energy.Points != previousPoints) {
+                const unsigned long long processSamples = processOrdinal - previousPointOrdinal;
+                const CKDWORD tickSamples = tick - previousPointTick;
+                GetLogger()->Info(
+                    "LOCKSTEP points=%d change=%d keyboard_samples=%llu tick_samples=%u process=%llu tick=%u",
+                    energy.Points, energy.Points - previousPoints, processSamples,
+                    tickSamples, processOrdinal, tick);
+                previousPoints = energy.Points;
+                previousPointOrdinal = processOrdinal;
+                previousPointTick = tick;
+            }
+        } else {
+            havePreviousPoints = false;
+        }
+    }
+
     m_ModsMenuEntry.OnProcess();
-    m_HUD.OnProcess(ImGui::GetIO().DeltaTime, m_TimeManager->GetLastDeltaTime());
+    if (!NativeDiagnosticDisabled("BML_NATIVE_DISABLE_HUD"))
+        m_HUD.OnProcess(ImGui::GetIO().DeltaTime, m_TimeManager->GetLastDeltaTime());
     OnProcess_Menu();
     m_Console.OnProcess();
 #if BML_ENABLE_ANGELSCRIPT
@@ -474,7 +528,9 @@ void BMLMod::InitConfigs() {
     m_UnlockFPS->SetDefaultBoolean(false);
 
     m_FPSLimit->SetComment("Set Frame Rate Limitation, this option will not work if frame rate is unlocked. Set to 0 will turn on VSync");
-    m_FPSLimit->SetDefaultInteger(240);
+    // Presentation follows the swapchain/display refresh. Behavior and
+    // physics use the player's independent fixed-rate scheduler.
+    m_FPSLimit->SetDefaultInteger(0);
 
     m_WidescreenFix->SetComment("Improve widescreen resolutions support");
     m_WidescreenFix->SetDefaultBoolean(false);
@@ -541,8 +597,8 @@ void BMLMod::InitGUI() {
 
     const std::string path = BML_GetModContext()->GetDirectoryUtf8(BML_DIR_LOADER);
 
-    m_ImGuiIniFilename = path + "\\ImGui.ini";
-    m_ImGuiLogFilename = path + "\\ImGui.log";
+    m_ImGuiIniFilename = utils::CombinePathUtf8(path, "ImGui.ini");
+    m_ImGuiLogFilename = utils::CombinePathUtf8(path, "ImGui.log");
     io.LogFilename = m_ImGuiLogFilename.c_str();
 
     if (m_EnableIniSettings->GetBoolean()) {

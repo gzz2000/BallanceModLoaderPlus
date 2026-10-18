@@ -26,9 +26,9 @@
 #endif
 #include "Loader/ModContext.h"
 
-#include <intrin.h>
 #include <new>
 #include <string>
+#include "Platform/ReturnAddress.h"
 
 namespace {
 
@@ -308,7 +308,7 @@ int BML_CDECL UIShowFPS(int visible) {
 
 int BML_CDECL ModMenuRegisterPage(
     const char *ownerId, const BML_ModMenuPage *page) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     try {
         if (!page)
             return BML_ERROR_INVALID_PARAMETER;
@@ -350,7 +350,7 @@ int BML_CDECL ModMenuRegisterPage(
 }
 
 int BML_CDECL ModMenuUnregisterPage(const char *ownerId, const char *pageId) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     try {
         if (!pageId || pageId[0] == '\0')
             return BML_ERROR_INVALID_PARAMETER;
@@ -496,7 +496,7 @@ int BML_CDECL BML_GetInterface(const char *interfaceId, uint16_t majorVersion, c
 
 int BML_CDECL BML_RegisterInterface(
     const char *ownerId, const void *interfacePtr) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     try {
         if (!interfacePtr)
             return BML_ERROR_INVALID_PARAMETER;
@@ -539,7 +539,7 @@ int BML_CDECL BML_RegisterInterface(
 
 int BML_CDECL BML_UnregisterInterface(
     const char *ownerId, const char *interfaceId, uint16_t majorVersion) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     try {
         if (!interfaceId || interfaceId[0] == '\0' || majorVersion == 0)
             return BML_ERROR_INVALID_PARAMETER;

@@ -56,6 +56,8 @@ struct RevertConflict {
 
 class Patch final {
 public:
+    struct Journal;
+
     Patch();
     ~Patch();
     Patch(const Patch &) = delete;
@@ -69,7 +71,6 @@ public:
     [[nodiscard]] std::vector<RevertConflict> Conflicts() const;
 
 private:
-    struct Journal;
     std::shared_ptr<Journal> m_Journal;
 
     friend class CKEdit;

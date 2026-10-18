@@ -12,10 +12,20 @@
 #include <unordered_set>
 #include <utility>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+namespace {
+constexpr std::uint32_t ERROR_SUCCESS = 0;
+constexpr std::uint32_t ERROR_FILE_NOT_FOUND = 2;
+constexpr std::uint32_t ERROR_PATH_NOT_FOUND = 3;
+constexpr std::uint32_t ERROR_INVALID_DATA = 13;
+constexpr std::uint32_t ERROR_INVALID_NAME = 123;
+}
+#endif
 
 #include "PathUtils.h"
 #include "StringUtils.h"
@@ -88,6 +98,7 @@ bool ConfigData::Load(const wchar_t *path, std::uint32_t &error) {
         // BML 0.3.13 accepted configuration files written in the active ANSI
         // code page. Convert those documents once so the next save publishes
         // canonical UTF-8. CP_UTF8 has no distinct legacy encoding to recover.
+#if defined(_WIN32)
         if (GetACP() == CP_UTF8 ||
             bytes.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
             return false;
@@ -95,6 +106,9 @@ bool ConfigData::Load(const wchar_t *path, std::uint32_t &error) {
         bytes = utils::Utf16ToUtf8(utils::AnsiToUtf16(bytes));
         if (bytes.empty() || !utils::IsValidUtf8(bytes))
             return false;
+#else
+        return false;
+#endif
     }
 
     ConfigData parsed;

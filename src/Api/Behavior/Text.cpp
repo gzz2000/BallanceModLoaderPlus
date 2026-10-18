@@ -3,7 +3,9 @@
 #include <climits>
 #include <cstdint>
 
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 namespace BML::Api::Behavior {
 namespace {
@@ -16,6 +18,7 @@ bool IsAscii(std::string_view text) noexcept {
     return true;
 }
 
+#if defined(_WIN32)
 bool Widen(std::string_view text, unsigned codePage, DWORD flags,
            std::wstring &out) {
     const int size = static_cast<int>(text.size());
@@ -27,7 +30,6 @@ bool Widen(std::string_view text, unsigned codePage, DWORD flags,
     return MultiByteToWideChar(codePage, flags, text.data(), size,
                                out.data(), wideSize) == wideSize;
 }
-
 // An exact conversion fails instead of substituting a best-fit or default
 // character. UTF-8 accepts neither check, and needs neither.
 bool Narrow(const std::wstring &wide, unsigned codePage, bool exact,
@@ -45,6 +47,7 @@ bool Narrow(const std::wstring &wide, unsigned codePage, bool exact,
                                out.data(), size, nullptr, defaulted) == size &&
         !usedDefault;
 }
+#endif
 
 } // namespace
 
@@ -91,6 +94,10 @@ bool IsUtf8(const char *data, std::size_t size) noexcept {
 }
 
 std::string NativeText(std::string_view utf8, unsigned codePage) {
+#if !defined(_WIN32)
+    (void) codePage;
+    return std::string(utf8);
+#else
     if (IsAscii(utf8) || utf8.size() > static_cast<std::size_t>(INT_MAX))
         return std::string(utf8);
     const unsigned page = codePage == ActiveCodePage ? GetACP() : codePage;
@@ -101,10 +108,16 @@ std::string NativeText(std::string_view utf8, unsigned codePage) {
         !Narrow(wide, page, true, native))
         return std::string(utf8);
     return native;
+#endif
 }
 
 std::string_view Utf8Text(std::string_view native, std::string &storage,
                           unsigned codePage) {
+#if !defined(_WIN32)
+    (void) storage;
+    (void) codePage;
+    return native;
+#else
     if (IsUtf8(native.data(), native.size()))
         return native;
     std::wstring wide;
@@ -115,6 +128,7 @@ std::string_view Utf8Text(std::string_view native, std::string &storage,
         storage.clear();
     }
     return storage;
+#endif
 }
 
 } // namespace BML::Api::Behavior

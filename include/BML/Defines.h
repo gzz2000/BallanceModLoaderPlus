@@ -41,10 +41,14 @@
 #endif // !BML_END_CDECLS
 
 #ifndef BML_EXPORT
-#ifdef BML_EXPORTS
+#if defined(_WIN32) && defined(BML_EXPORTS)
 #define BML_EXPORT __declspec(dllexport)
-#else
+#elif defined(_WIN32)
 #define BML_EXPORT __declspec(dllimport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define BML_EXPORT __attribute__((visibility("default")))
+#else
+#define BML_EXPORT
 #endif
 #endif
 
@@ -58,9 +62,15 @@
 
 // Legacy export prefix. New entry points should use BML_MOD_ENTRY so their
 // calling convention is independent of the Mod project's compiler defaults.
+#if defined(_WIN32)
 #define MOD_EXPORT extern "C" __declspec(dllexport)
 #define BML_MOD_ENTRY(return_type) \
     extern "C" __declspec(dllexport) return_type BML_CDECL
+#else
+#define MOD_EXPORT extern "C" __attribute__((visibility("default")))
+#define BML_MOD_ENTRY(return_type) \
+    extern "C" __attribute__((visibility("default"))) return_type BML_CDECL
+#endif
 
 #ifndef MAX_PATH
 #define MAX_PATH 260
@@ -93,7 +103,11 @@
 #endif
 
 // Alignment macros
+#if defined(_MSC_VER)
 #define BML_ALIGN(x) __declspec(align(x))
+#else
+#define BML_ALIGN(x) alignas(x)
+#endif
 #define BML_CACHE_LINE_SIZE 64
 #define BML_CACHE_ALIGNED BML_ALIGN(BML_CACHE_LINE_SIZE)
 

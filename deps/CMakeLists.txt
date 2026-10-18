@@ -1,5 +1,8 @@
-# MinHook
-add_subdirectory(minhook EXCLUDE_FROM_ALL)
+# MinHook is only used by the legacy Windows interception layer. Ballanced
+# provides source-level integration points on native platforms.
+if (WIN32)
+    add_subdirectory(minhook EXCLUDE_FROM_ALL)
+endif ()
 
 # zip
 add_subdirectory(zip EXCLUDE_FROM_ALL)

@@ -51,6 +51,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 build*/
+/install/
 install-*/
 
 ## JetBrains IDE artifacts

@@ -5,15 +5,35 @@
 #include <cstring>
 #include <cwchar>
 #include <filesystem>
-#include <io.h>
 #include <new>
+#if defined(_WIN32)
+#include <io.h>
 #include <windows.h>
+#endif
 
 #undef CompareString
 
 #include "BML/ILogger.h"
 #include "PathUtils.h"
 #include "StringUtils.h"
+
+namespace {
+std::filesystem::path NativePath(const std::wstring &path) {
+#if defined(_WIN32)
+    return std::filesystem::path(path);
+#else
+    return std::filesystem::path(utils::Utf16ToUtf8(path));
+#endif
+}
+
+std::wstring WidePath(const std::filesystem::path &path) {
+#if defined(_WIN32)
+    return path.wstring();
+#else
+    return utils::Utf8ToUtf16(path.string());
+#endif
+}
+}
 
 MapEntry::~MapEntry() {
     if (m_BeingDeleted)
@@ -58,13 +78,13 @@ bool MapCatalog::ResolveFile(const std::wstring &mapsDirectory, std::string_view
         return false;
     }
 
-    const std::filesystem::path requested(widePath);
+    const std::filesystem::path requested(utils::Utf16ToUtf8(widePath));
     if (requested.has_root_path()) {
         error = "use a path relative to ModLoader/Maps";
         return false;
     }
     for (const auto &part : requested) {
-        if (part == L"..") {
+        if (part == "..") {
             error = "parent-directory paths are not allowed";
             return false;
         }
@@ -74,7 +94,7 @@ bool MapCatalog::ResolveFile(const std::wstring &mapsDirectory, std::string_view
         return false;
     }
 
-    const std::wstring candidate = (std::filesystem::path(mapsDirectory) / requested).wstring();
+    const std::wstring candidate = WidePath(NativePath(mapsDirectory) / requested);
     return ValidateFile(mapsDirectory, candidate, path, error);
 }
 
@@ -86,13 +106,7 @@ bool MapCatalog::ValidateFile(const std::wstring &mapsDirectory, const std::wstr
         error = "only .nmo and .cmo maps can be loaded";
         return false;
     }
-    if (candidate.size() >= MAX_PATH) {
-        error = "the map path is too long";
-        return false;
-    }
-
-    const DWORD attributes = GetFileAttributesW(candidate.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    if (!utils::FileExistsW(candidate)) {
         error = "map file was not found";
         return false;
     }
@@ -102,7 +116,7 @@ bool MapCatalog::ValidateFile(const std::wstring &mapsDirectory, const std::wstr
         error = "the map could not be resolved inside ModLoader/Maps";
         return false;
     }
-    if (filePath.size() >= MAX_PATH || !IsSupportedFileType(filePath)) {
+    if (!IsSupportedFileType(filePath)) {
         error = "the resolved map path is not a supported file";
         return false;
     }
@@ -122,22 +136,11 @@ bool MapCatalog::Refresh(const std::wstring &path, int maxDepth, ILogger *logger
     newRoot->name = "Maps";
     newRoot->path = path;
 
-    const DWORD attributes = GetFileAttributesW(path.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES) {
-        const DWORD error = GetLastError();
-        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
-            if (logger) {
-                logger->Error("Failed to inspect maps directory %s: Windows error %lu",
-                              utils::Utf16ToUtf8(path).c_str(),
-                              static_cast<unsigned long>(error));
-            }
-            return false;
-        }
-    } else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    if (utils::PathExistsW(path) && !utils::DirectoryExistsW(path)) {
         if (logger)
             logger->Error("Maps path is not a directory: %s", utils::Utf16ToUtf8(path).c_str());
         return false;
-    } else {
+    } else if (utils::DirectoryExistsW(path)) {
         std::wstring rootPath;
         if (!utils::TryGetFinalPathW(path, rootPath) ||
             ExploreMaps(newRoot.get(), maxDepth, logger, rootPath) == ScanResult::Failure)
@@ -185,72 +188,41 @@ MapCatalog::ScanResult MapCatalog::ExploreMaps(MapEntry *maps, int depth, ILogge
     if (depth <= 0)
         return ScanResult::Success;
 
-    std::wstring searchPath = maps->path;
-    if (searchPath.length() > MAX_PATH) {
-        if (logger)
-            logger->Error("Path too long: %s", utils::Utf16ToUtf8(maps->path).c_str());
-        return ScanResult::Failure;
-    }
-    searchPath.append(L"\\*");
-
-    _wfinddata_t fileinfo = {};
-    const intptr_t handle = _wfindfirst(searchPath.c_str(), &fileinfo);
-    if (handle == -1) {
-        const int error = errno;
-        if (error != ENOENT && logger) {
-            const std::string message = "Failed to explore maps directory " +
-                                        utils::Utf16ToUtf8(maps->path) + ": " + strerror(error);
-            logger->Error("%s", message.c_str());
-        }
-        return error == ENOENT ? ScanResult::Success : ScanResult::Failure;
-    }
-
-    struct FileHandleGuard {
-        intptr_t Handle;
-        ~FileHandleGuard() { if (Handle != -1) _findclose(Handle); }
-    } guard{handle};
-
     try {
-        do {
-            if (wcscmp(fileinfo.name, L".") == 0 || wcscmp(fileinfo.name, L"..") == 0)
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(NativePath(maps->path), ec), end;
+             it != end && !ec; it.increment(ec)) {
+            const std::wstring fileName = WidePath(it->path().filename());
+            if (fileName == L"." || fileName == L"..")
                 continue;
-
-            std::wstring fullPath = maps->path;
-            if (fullPath.length() + wcslen(fileinfo.name) + 2 > MAX_PATH) {
-                if (logger) {
-                    logger->Warn("Skipping file with path too long: %s\\%s",
-                                 utils::Utf16ToUtf8(maps->path).c_str(),
-                                 utils::Utf16ToUtf8(fileinfo.name).c_str());
-                }
-                continue;
-            }
-            fullPath.append(L"\\").append(fileinfo.name);
+            const std::wstring fullPath = WidePath(it->path());
 
             std::wstring finalPath;
             if (!utils::TryGetFinalPathW(fullPath, finalPath) ||
                 !utils::IsPathInsideRootW(finalPath, rootPath))
                 continue;
 
-            if (wcschr(fileinfo.name, L'\\') || wcschr(fileinfo.name, L'/') ||
-                wcsstr(fileinfo.name, L"..")) {
+            if (fileName.find_first_of(L"\\/") != std::wstring::npos ||
+                fileName.find(L"..") != std::wstring::npos) {
                 continue;
             }
 
-            if (fileinfo.attrib & _A_SUBDIR) {
+            if (it->is_directory(ec)) {
                 auto entry = std::unique_ptr<MapEntry>(new(std::nothrow) MapEntry(maps, MAP_ENTRY_DIR));
                 if (!entry) {
                     if (logger)
                         logger->Error("Memory allocation failed for directory entry");
                     return ScanResult::Failure;
                 }
-                entry->name = utils::Utf16ToUtf8(fileinfo.name);
+                entry->name = utils::Utf16ToUtf8(fileName);
                 entry->path = fullPath;
                 maps->children.push_back(entry.get());
                 MapEntry *child = entry.release();
                 if (ExploreMaps(child, depth - 1, logger, rootPath) == ScanResult::Failure)
                     return ScanResult::Failure;
-            } else if (IsSupportedFileType(fileinfo.name) && IsSupportedFileType(finalPath)) {
-                std::wstring filename = fileinfo.name;
+            } else if (it->is_regular_file(ec) && IsSupportedFileType(fileName) &&
+                       IsSupportedFileType(finalPath)) {
+                std::wstring filename = fileName;
                 const size_t dotPos = filename.find_last_of(L'.');
                 if (dotPos != std::wstring::npos)
                     filename = filename.substr(0, dotPos);
@@ -266,14 +238,12 @@ MapCatalog::ScanResult MapCatalog::ExploreMaps(MapEntry *maps, int depth, ILogge
                 maps->children.push_back(entry.get());
                 entry.release();
             }
-        } while (_wfindnext(handle, &fileinfo) == 0);
-
-        const int enumerationError = errno;
-        if (enumerationError != ENOENT) {
+        }
+        if (ec) {
             if (logger) {
                 logger->Error("Failed while enumerating maps directory %s: %s",
                               utils::Utf16ToUtf8(maps->path).c_str(),
-                              strerror(enumerationError));
+                              ec.message().c_str());
             }
             return ScanResult::Failure;
         }

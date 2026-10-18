@@ -173,6 +173,15 @@ Type Describe(CKParameterManager *manager, CKGUID type) {
 
     if (Derived(manager, type, CKPGUID_OBJECT))
         result.ValueForm = Form::Object;
+    // Virtools enums and flags are registered as standalone provider types,
+    // not as descendants of CKPGUID_INT. Their stored representation is still
+    // one 32-bit integer and is safe to observe/copy when no destructor owns
+    // the value. This includes Text Properties used by Menu_Options.
+    else if ((description->dwFlags &
+              (CKPARAMETERTYPE_FLAGS | CKPARAMETERTYPE_ENUMS)) != 0 &&
+             description->DefaultSize == sizeof(std::int32_t) &&
+             !OwnsStoredValue(*description))
+        result.ValueForm = Form::Int32;
     // These manager-defined domains store one integer. Their callbacks name
     // or initialise that integer; only a registered destructor would make
     // caller-supplied bytes unsafe.

@@ -6,8 +6,6 @@
 #include <utility>
 #include <vector>
 
-#include <intrin.h>
-
 #include "BML/IBML.h"
 #include "BML/ICommand.h"
 #include "Console/CommandContext.h"
@@ -16,6 +14,7 @@
 #include "Loader/ModContext.h"
 #include "Logging/Logger.h"
 #include "StringUtils.h"
+#include "Platform/ReturnAddress.h"
 
 namespace BML::Api {
 namespace {
@@ -183,7 +182,7 @@ std::vector<const char *> BuildArguments(const std::vector<std::string> &args) {
 int BML_CDECL RegisterCommand(
     const char *ownerId, const BML_CommandDefinition *definition,
     BML_CommandHandle *outHandle) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     if (outHandle)
         *outHandle = BML_COMMAND_INVALID_HANDLE;
     if (!definition || !outHandle ||
@@ -211,7 +210,7 @@ int BML_CDECL RegisterCommand(
 
 int BML_CDECL UnregisterCommand(
     const char *ownerId, BML_CommandHandle handle) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     if (handle == BML_COMMAND_INVALID_HANDLE)
         return BML_ERROR_INVALID_PARAMETER;
 
@@ -226,7 +225,7 @@ int BML_CDECL UnregisterCommand(
 
 int BML_CDECL SetCommandEnabled(
     const char *ownerId, BML_CommandHandle handle, int enabled) {
-    const void *const callerAddress = _ReturnAddress();
+    const void *const callerAddress = BML_RETURN_ADDRESS();
     if (handle == BML_COMMAND_INVALID_HANDLE)
         return BML_ERROR_INVALID_PARAMETER;
 

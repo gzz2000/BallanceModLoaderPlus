@@ -1,6 +1,8 @@
 #include "Logging/Logger.h"
 
 #include <cstdio>
+#include <chrono>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -8,10 +10,12 @@
 #include "AngelScript/ScriptDevToolsService.h"
 #endif
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#endif
 
 #include "Loader/ModContext.h"
 
@@ -49,8 +53,17 @@ void Logger::Error(const char *fmt, ...) {
 }
 
 void Logger::Log(const char *level, const char *fmt, va_list args) {
+#if defined(_WIN32)
     SYSTEMTIME sys;
     GetLocalTime(&sys);
+#else
+    const auto now = std::chrono::system_clock::now();
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+    const std::time_t time = std::chrono::system_clock::to_time_t(now);
+    std::tm sys{};
+    localtime_r(&time, &sys);
+#endif
 
     auto *ctx = BML_GetModContext();
     FILE *logFile = ctx ? ctx->GetLogFile() : nullptr;
@@ -59,13 +72,13 @@ void Logger::Log(const char *level, const char *fmt, va_list args) {
     if (fmt) {
         va_list sizeArgs;
         va_copy(sizeArgs, args);
-        const int length = _vscprintf(fmt, sizeArgs);
+        const int length = std::vsnprintf(nullptr, 0, fmt, sizeArgs);
         va_end(sizeArgs);
         if (length >= 0) {
             std::vector<char> buffer(static_cast<size_t>(length) + 1);
             va_list formatArgs;
             va_copy(formatArgs, args);
-            vsnprintf_s(buffer.data(), buffer.size(), _TRUNCATE, fmt, formatArgs);
+            std::vsnprintf(buffer.data(), buffer.size(), fmt, formatArgs);
             va_end(formatArgs);
             message.assign(buffer.data());
         }
@@ -81,8 +94,14 @@ void Logger::Log(const char *level, const char *fmt, va_list args) {
     for (FILE *file: outFiles) {
         if (!file) continue;
 
+#if defined(_WIN32)
         fprintf(file, "[%02d/%02d/%d %02d:%02d:%02d.%03d] ", sys.wMonth, sys.wDay,
                 sys.wYear, sys.wHour, sys.wMinute, sys.wSecond, sys.wMilliseconds);
+#else
+        fprintf(file, "[%02d/%02d/%d %02d:%02d:%02d.%03d] ", sys.tm_mon + 1,
+                sys.tm_mday, sys.tm_year + 1900, sys.tm_hour, sys.tm_min,
+                sys.tm_sec, static_cast<int>(milliseconds.count()));
+#endif
         fprintf(file, "[%s/%s]: ", m_ModName, level);
         fputs(message.c_str(), file);
         fputc('\n', file);

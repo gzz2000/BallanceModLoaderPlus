@@ -132,6 +132,19 @@ if (WIN32)
         POSITION_INDEPENDENT_CODE ON
         FOLDER "Utils"
     )
+else ()
+    add_library(BML_PathUtils STATIC
+        PathUtils.h
+        PathUtilsPosix.cpp
+    )
+    target_include_directories(BML_PathUtils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(BML_PathUtils PUBLIC BML_StringUtils zip)
+    set_target_properties(BML_PathUtils PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER "Utils")
+
+    add_library(BML_IniFile STATIC IniFile.h IniFile.cpp)
+    target_include_directories(BML_IniFile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(BML_IniFile PUBLIC BML_PathUtils BML_StringUtils utf8)
+    set_target_properties(BML_IniFile PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER "Utils")
 endif ()
 
 # ============================================================================
@@ -154,6 +167,8 @@ if (WIN32)
         BML_IniFile
         BML_PathUtils
     )
+else ()
+    target_link_libraries(BML_Utils INTERFACE BML_IniFile BML_PathUtils)
 endif ()
 
 add_library(BMLUtils ALIAS BML_Utils)

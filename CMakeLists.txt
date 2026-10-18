@@ -21,9 +21,8 @@ include(CMakePackageConfigHelpers)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakeTargets")
 
-if (NOT WIN32)
-    message(FATAL_ERROR "Only support Windows.")
-endif ()
+set(BML_BALLANCED_ROOT "" CACHE PATH
+        "Optional Ballanced checkout used as the native Virtools SDK")
 
 # Use relative paths
 if (WIN32)
@@ -85,7 +84,22 @@ set(BML_SOURCE_DIR "${PROJECT_SOURCE_DIR}/src" CACHE INTERNAL "")
 # installed-consumer tests in every subdirectory.
 include("${PROJECT_SOURCE_DIR}/cmake/BMLBehaviorBlocksPublicSurface.cmake")
 
-find_package(VirtoolsSDK REQUIRED)
+if (BML_BALLANCED_ROOT AND EXISTS "${BML_BALLANCED_ROOT}/Source/CK2/include/CKAll.h")
+    set(_bml_ballanced_build "${BML_BALLANCED_ROOT}/build/macos-arm64-runtime")
+    foreach (_bml_sdk_library IN ITEMS CK2 VxMath)
+        if (NOT TARGET VirtoolsSDK::${_bml_sdk_library})
+            add_library(VirtoolsSDK::${_bml_sdk_library} SHARED IMPORTED)
+            set_target_properties(VirtoolsSDK::${_bml_sdk_library} PROPERTIES
+                    IMPORTED_LOCATION "${_bml_ballanced_build}/lib/lib${_bml_sdk_library}.dylib"
+                    INTERFACE_INCLUDE_DIRECTORIES
+                    "${BML_BALLANCED_ROOT}/Source/CK2/include;${BML_BALLANCED_ROOT}/Source/VxMath/include"
+            )
+        endif ()
+    endforeach ()
+    message(STATUS "Using native Ballanced SDK: ${BML_BALLANCED_ROOT}")
+else ()
+    find_package(VirtoolsSDK REQUIRED)
+endif ()
 
 if (BML_ENABLE_ANGELSCRIPT)
     find_path(CKANGELSCRIPT_INCLUDE_DIR

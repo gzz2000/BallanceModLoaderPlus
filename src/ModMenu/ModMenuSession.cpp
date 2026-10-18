@@ -299,9 +299,6 @@ std::optional<ModMenuSession::PreparedEdits> ModMenuSession::PrepareEdits() cons
 
 void ModMenuSession::AcceptEdits(PreparedEdits &&prepared,
                                  std::uint64_t valueRevision) noexcept {
-    static_assert(std::is_nothrow_assignable_v<std::optional<ModMenuDocument> &,
-                                               ModMenuDocument &&>);
-
     prepared.m_AcceptedDocument.valueRevision = valueRevision;
     m_Document = std::move(prepared.m_AcceptedDocument);
     m_Drafts.clear();

@@ -161,13 +161,7 @@ static bool ImGui_ImplCK2_ShouldUploadDrawSegment(const ImDrawCmd *commands,
 
 #include "HookUtils.h"
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
+#include <chrono>
 
 enum ImGui_ImplCK2_TextureFailure
 {
@@ -269,6 +263,7 @@ static const VXRENDERSTATETYPE ImGui_ImplCK2_RenderStates[] = {
     VXRENDERSTATE_LIGHTING,
 };
 
+#if !defined(BML_NATIVE_BALLANCED)
 class ImGui_ImplCK2_RenderStateBackup
 {
 public:
@@ -294,6 +289,7 @@ private:
     VxRect ViewRect;
     CKDWORD Values[IM_ARRAYSIZE(ImGui_ImplCK2_RenderStates)] = {};
 };
+#endif
 #endif
 
 static bool ImGui_ImplCK2_BuildDrawSlice(const ImDrawIdx *indices, unsigned int index_count,
@@ -671,8 +667,10 @@ static void ImGui_ImplCK2_SetupRenderState(ImDrawData *draw_data)
     CKRenderContext *dev = bd->RenderContext;
 
     // Setup viewport
+#if !defined(BML_NATIVE_BALLANCED)
     VxRect viewport(0, 0, draw_data->DisplaySize.x, draw_data->DisplaySize.y);
     dev->SetViewRect(viewport);
+#endif
 
     // Setup render state: alpha-blending, no face culling, no depth testing, shade mode
     dev->SetState(VXRENDERSTATE_FILLMODE, VXFILL_SOLID);
@@ -920,7 +918,14 @@ static void ImGui_ImplCK2_RenderDrawDataInternal(ImDrawData *draw_data, ImGui_Im
             if (tex->Status != ImTextureStatus_OK)
                 ImGui_ImplCK2_UpdateTexture(tex);
 
+    // Texture uploads are independent of draw submission. Avoid touching the
+    // Virtools render state at all on frames with no overlay geometry.
+    if (draw_data->CmdListsCount == 0)
+        return;
+
+#if !defined(BML_NATIVE_BALLANCED)
     ImGui_ImplCK2_RenderStateBackup state_backup(dev);
+#endif
 
     // Setup desired render state
     ImGui_ImplCK2_SetupRenderState(draw_data);
@@ -1126,17 +1131,13 @@ void ImGui_ImplCK2_RenderDrawData(ImDrawData *draw_data)
     if (!bd || !bd->RenderContext)
         return;
 
-    LARGE_INTEGER start{};
-    const bool timing_available = bd->PerformanceFrequency != 0 && QueryPerformanceCounter(&start);
+    const auto start = std::chrono::steady_clock::now();
     ImGui_ImplCK2_FrameMetrics metrics{};
     ImGui_ImplCK2_RenderDrawDataInternal(draw_data, bd, fb_width, fb_height, &metrics);
 
-    LARGE_INTEGER end{};
-    if (timing_available && QueryPerformanceCounter(&end) && end.QuadPart >= start.QuadPart)
-    {
-        metrics.RenderTimeMicroseconds = (ImU64)(end.QuadPart - start.QuadPart) * 1000000ULL /
-                                         bd->PerformanceFrequency;
-    }
+    const auto end = std::chrono::steady_clock::now();
+    metrics.RenderTimeMicroseconds = static_cast<ImU64>(
+        std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
 
     bd->LastFrameMetrics = metrics;
     bd->TotalRenderTimeMicroseconds += metrics.RenderTimeMicroseconds;
@@ -1192,9 +1193,7 @@ bool ImGui_ImplCK2_Init(CKContext *context)
     bd->RenderContext = render_context;
     bd->TextureMaxWidth = texture_limits.Width;
     bd->TextureMaxHeight = texture_limits.Height;
-    LARGE_INTEGER performance_frequency{};
-    if (QueryPerformanceFrequency(&performance_frequency) && performance_frequency.QuadPart > 0)
-        bd->PerformanceFrequency = (ImU64)performance_frequency.QuadPart;
+    bd->PerformanceFrequency = 1000000ULL;
 
     if (texture_limits.UsedFallback)
         utils::OutputDebugA("BML CK2 renderer received invalid texture limits; using %dx%d\n",

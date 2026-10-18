@@ -3,12 +3,18 @@
 #include <exception>
 #include <stdexcept>
 
+#if defined(_WIN32)
 #include <intrin.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#include <unistd.h>
+#include <SDL3/SDL.h>
+#endif
 
 #include <oniguruma.h>
 
@@ -41,10 +47,15 @@ namespace {
     constexpr wchar_t kInstanceDirectoryName[] = L"Instance";
     constexpr wchar_t kShellStateFileName[] = L"CommandBar.shell.json";
 
+#if !defined(_WIN32)
+    using HMODULE = void *;
+#endif
+
     HMODULE ModuleFromAddress(const void *address) {
         if (!address)
             return nullptr;
 
+#if defined(_WIN32)
         HMODULE module = nullptr;
         if (!::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -53,6 +64,10 @@ namespace {
             return nullptr;
         }
         return module;
+#else
+        Dl_info info{};
+        return dladdr(address, &info) != 0 ? info.dli_fbase : nullptr;
+#endif
     }
 
     std::wstring ResolveGameDirectoryFromExecutable(const std::wstring &executablePath) {
@@ -71,7 +86,7 @@ namespace {
 
     std::wstring BuildFallbackTempDirectory(const std::wstring &baseTempDirectory, unsigned long processId) {
         wchar_t suffix[64] = {};
-        _snwprintf(suffix, sizeof(suffix) / sizeof(suffix[0]), L"BML-%lu", processId);
+        std::swprintf(suffix, sizeof(suffix) / sizeof(suffix[0]), L"BML-%lu", processId);
         suffix[(sizeof(suffix) / sizeof(suffix[0])) - 1] = L'\0';
         return utils::CombinePathW(baseTempDirectory, suffix);
     }
@@ -633,7 +648,11 @@ BML::Behavior::Internal::Status ModContext::RetireBehaviorOwner(
 void ModContext::RegisterCommand(ICommand *cmd) {
     // Taken before the lock: this is a virtual the Mod calls across the DLL
     // boundary, so the return address is in whichever module is registering.
-    void *const registrar = ModuleFromAddress(_ReturnAddress());
+#if defined(_WIN32)
+    void *const registrar = const_cast<void *>(ModuleFromAddress(_ReturnAddress()));
+#else
+    void *const registrar = const_cast<void *>(ModuleFromAddress(__builtin_return_address(0)));
+#endif
 
     if (!IsMainThread()) {
         if (m_Logger)
@@ -1011,8 +1030,9 @@ bool ModContext::LoadConfig(Config *config) {
     if (!mod)
         return false;
 
-    std::wstring configPath = m_LoaderDir;
-    configPath.append(L"\\Configs\\").append(utils::ToWString(mod->GetID())).append(L".cfg");
+    std::wstring configFilename = utils::ToWString(mod->GetID());
+    configFilename.append(L".cfg");
+    const std::wstring configPath = utils::CombinePathW(m_ConfigDir, configFilename);
     const bool loaded = config->Load(configPath.c_str());
     if (config->GetLoadStatus() == Config::LoadStatus::Failed && m_Logger) {
         m_Logger->Error("Could not load config for mod %s (error %lu). Existing values are preserved; "
@@ -1033,8 +1053,9 @@ bool ModContext::SaveConfig(Config *config, bool snapshotModMetadata) {
     if (modId.empty())
         return false;
 
-    std::wstring configPath = m_LoaderDir;
-    configPath.append(L"\\Configs\\").append(utils::ToWString(modId)).append(L".cfg");
+    std::wstring configFilename = utils::ToWString(modId);
+    configFilename.append(L".cfg");
+    const std::wstring configPath = utils::CombinePathW(m_ConfigDir, configFilename);
     return config->Save(configPath.c_str());
 }
 
@@ -1296,8 +1317,14 @@ void ModContext::AddTimerLoop(float delay, std::function<bool()> callback) {
 
 void ModContext::ExitGame() {
     OnExitGame();
-    AddTimer(1ul, [this]() {
+    AddTimer(static_cast<CKDWORD>(1), [this]() {
+#if defined(_WIN32)
         ::PostMessage((HWND) m_CKContext->GetMainWindow(), 0x5FA, 0, 0);
+#else
+        SDL_Event event{};
+        event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&event);
+#endif
     });
 }
 
@@ -1612,18 +1639,28 @@ void ModContext::OnPostLifeUp() {
 }
 
 void ModContext::InitDirectories() {
-    wchar_t path[MAX_PATH];
-
     // Set up working directory
+#if defined(_WIN32)
+    wchar_t path[MAX_PATH];
     _wgetcwd(path, MAX_PATH);
     path[MAX_PATH - 1] = '\0';
     m_WorkingDir = path;
+#else
+    m_WorkingDir = utils::GetCurrentDirectoryW();
+#endif
     m_WorkingDirUtf8 = utils::ToString(m_WorkingDir);
 
     // Set up game directory
+#if defined(_WIN32)
     ::GetModuleFileNameW(nullptr, path, MAX_PATH);
     path[MAX_PATH - 1] = '\0';
     m_GameDir = ResolveGameDirectoryFromExecutable(path);
+#else
+    // Player deliberately changes into its per-user data directory before
+    // CK initialization. Preserve BML's legacy "game directory" semantics
+    // there so configs, maps and highscores remain writable and portable.
+    m_GameDir = m_WorkingDir;
+#endif
     m_GameDirUtf8 = utils::ToString(m_GameDir);
 
     // Set up loader directory
@@ -1634,18 +1671,26 @@ void ModContext::InitDirectories() {
     // Set up temp directory
     m_TempDir = CreateInstanceTempDirectory(
         m_LoaderDir,
+#if defined(_WIN32)
         static_cast<unsigned long>(::GetCurrentProcessId()));
+#else
+        static_cast<unsigned long>(::getpid()));
+#endif
     m_TempDirUtf8 = utils::ToString(m_TempDir);
 
     // Set up config directory
-    m_ConfigDir = m_LoaderDir + L"\\Configs";
+    m_ConfigDir = utils::CombinePathW(m_LoaderDir, L"Configs");
     utils::CreateFileTreeW(m_ConfigDir);
     m_ConfigDirUtf8 = utils::ToString(m_ConfigDir);
 }
 
 void ModContext::InitLogger() {
-    std::wstring logfilePath = m_LoaderDir + L"\\ModLoader.log";
+    std::wstring logfilePath = utils::CombinePathW(m_LoaderDir, L"ModLoader.log");
+#if defined(_WIN32)
     m_Logfile = _wfopen(logfilePath.c_str(), L"w");
+#else
+    m_Logfile = std::fopen(utils::Utf16ToUtf8(logfilePath).c_str(), "w");
+#endif
     auto *logger = new Logger("ModLoader");
     Logger::SetDefault(logger);
     m_Logger = logger;
@@ -1917,11 +1962,20 @@ void ModContext::AddDataPath(const char *path) {
     XString dataPath = path;
     if (!m_PathManager->PathIsAbsolute(dataPath)) {
         char buf[MAX_PATH];
-        VxGetCurrentDirectory(buf);
+        VxGetCurrentDirectory(buf, sizeof(buf));
+#if defined(_WIN32)
         dataPath.Format("%s\\%s", buf, dataPath.CStr());
+#else
+        dataPath.Format("%s/%s", buf, dataPath.CStr());
+#endif
     }
+#if defined(_WIN32)
     if (dataPath[dataPath.Length() - 1] != '\\')
         dataPath << '\\';
+#else
+    if (dataPath[dataPath.Length() - 1] != '/')
+        dataPath << '/';
+#endif
 
     if (utils::DirectoryExistsA(dataPath.CStr()) &&
         m_PathManager->GetPathIndex(DATA_PATH_IDX, dataPath) == -1) {

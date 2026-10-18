@@ -2,12 +2,6 @@
 // translation unit. Mirrors Interfaces.cpp (the side of Interface.h) and
 // ImcApi.cpp (the side of Imc.h); BML.cpp keeps only the Virtools plugin entry
 // points and the process hooks.
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <Windows.h>
-
-#include <intrin.h>
 #include <limits>
 
 #include "BML/BML.h"
@@ -15,6 +9,7 @@
 #include "Loader/ModContext.h"
 #include "PathUtils.h"
 #include "StringUtils.h"
+#include "Platform/ReturnAddress.h"
 
 namespace {
 void StoreFileTimeResult(const utils::FileTime &fileTime,
@@ -152,7 +147,7 @@ wchar_t *BML_CDECL BML_GetModRootW(const char *modId) {
         if (!context)
             return nullptr;
 
-        const std::wstring root = context->GetModRootDirectory(_ReturnAddress(), modId);
+        const std::wstring root = context->GetModRootDirectory(BML_RETURN_ADDRESS(), modId);
         return root.empty() ? nullptr : CopyWString(root);
     } catch (...) {
         return nullptr;
@@ -165,7 +160,7 @@ char *BML_CDECL BML_GetModRootUtf8(const char *modId) {
         if (!context)
             return nullptr;
 
-        const std::wstring root = context->GetModRootDirectory(_ReturnAddress(), modId);
+        const std::wstring root = context->GetModRootDirectory(BML_RETURN_ADDRESS(), modId);
         return root.empty() ? nullptr : BML_Strdup(utils::Utf16ToUtf8(root).c_str());
     } catch (...) {
         return nullptr;
@@ -177,7 +172,7 @@ int BML_CDECL BML_UnregisterCommand(const char *name) {
     if (!context)
         return BML_ERROR_FAIL;
 
-    return context->UnregisterCommand(_ReturnAddress(), name);
+    return context->UnregisterCommand(BML_RETURN_ADDRESS(), name);
 }
 
 int BML_CDECL BML_SetCommandStatus(int status) {

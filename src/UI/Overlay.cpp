@@ -3,17 +3,24 @@
 #include "UI/Ime/Presentation.h"
 #include "UI/OverlayPlatformInput.h"
 
-#include "CKContext.h"
+#include <cstdlib>
 
+#include "CKContext.h"
+#include "imgui_internal.h"
+#include "UI/imgui_impl_ck2.h"
+
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
 
-#include "imgui_internal.h"
-#include "UI/imgui_impl_ck2.h"
 #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
 #include "backends/imgui_impl_win32.h"
+#else
+#include <SDL3/SDL.h>
+#include "backends/imgui_impl_sdl3.h"
+#endif
 
 namespace Overlay {
     ImGuiContext *g_ImGuiContext = nullptr;
@@ -72,11 +79,21 @@ namespace Overlay {
     bool ImGuiInitPlatform(CKContext *context) {
         ImGuiContextScope scope;
 
+#if defined(_WIN32)
         HWND window = context ? static_cast<HWND>(context->GetMainWindow()) : nullptr;
-        if (!window || !ImGui_ImplWin32_Init(window))
+        const bool initialized = window && ImGui_ImplWin32_Init(window);
+#else
+        SDL_Window *window = context ? static_cast<SDL_Window *>(context->GetMainWindow()) : nullptr;
+        const bool initialized = window && ImGui_ImplSDL3_InitForOther(window);
+#endif
+        if (!initialized)
             return false;
         if (!PlatformInput::Attach(window)) {
+#if defined(_WIN32)
             ImGui_ImplWin32_Shutdown();
+#else
+            ImGui_ImplSDL3_Shutdown();
+#endif
             return false;
         }
 
@@ -99,16 +116,18 @@ namespace Overlay {
     void ImGuiShutdownPlatform(CKContext *context) {
         (void) context;
         if (!g_PlatformInitialized) {
-            if (!PlatformInput::Detach())
-                ::OutputDebugStringA("BML: Unable to detach Overlay platform input.\n");
+            PlatformInput::Detach();
             return;
         }
 
         ImGuiContextScope scope;
 
-        if (!PlatformInput::Detach())
-            ::OutputDebugStringA("BML: Unable to detach Overlay platform input.\n");
+        PlatformInput::Detach();
+#if defined(_WIN32)
         ImGui_ImplWin32_Shutdown();
+#else
+        ImGui_ImplSDL3_Shutdown();
+#endif
         g_PlatformInitialized = false;
     }
 
@@ -139,7 +158,11 @@ namespace Overlay {
                 ImGui::EndFrame();
             }
 
+#if defined(_WIN32)
             ImGui_ImplWin32_NewFrame();
+#else
+            ImGui_ImplSDL3_NewFrame();
+#endif
             ImGui_ImplCK2_NewFrame();
             ImGui::NewFrame();
 
@@ -169,6 +192,11 @@ namespace Overlay {
     }
 
     void ImGuiOnRender() {
+#if defined(BML_NATIVE_BALLANCED)
+        if (const char *disabled = std::getenv("BML_NATIVE_DISABLE_OVERLAY_RENDER");
+            disabled && disabled[0] != '\0' && disabled[0] != '0')
+            return;
+#endif
         if (g_DrawDataReady) {
             ImGuiContextScope scope;
             ImGui_ImplCK2_RenderDrawData(ImGui::GetDrawData());

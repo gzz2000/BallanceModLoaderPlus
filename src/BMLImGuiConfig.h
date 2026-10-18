@@ -6,10 +6,14 @@
 
 #if defined(BML_IMGUI_TEST_ENGINE_SOURCE)
 #define IMGUI_API
-#elif defined(IMGUI_EXPORT)
+#elif defined(_WIN32) && defined(IMGUI_EXPORT)
 #define IMGUI_API __declspec(dllexport)
-#else
+#elif defined(_WIN32)
 #define IMGUI_API __declspec(dllimport)
+#elif defined(IMGUI_EXPORT)
+#define IMGUI_API __attribute__((visibility("default")))
+#else
+#define IMGUI_API
 #endif
 
 #define IMGUI_USE_BGRA_PACKED_COLOR

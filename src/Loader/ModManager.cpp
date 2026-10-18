@@ -177,15 +177,18 @@ CKERROR ModManager::PostProcess() {
     Overlay::ImGuiContextScope scope;
     ImGuiFrameCompletion frameCompletion;
 
-    m_ModContext->RunPhysicsPostProcess();
+    // BML owns CKIpionManager's post-process hook, so letting this run while
+    // the level is paused advances IVP even though the game has stopped
+    // applying input forces.  Keep the Virtools/UI frame alive so Escape can
+    // unpause, but freeze the physics world at the exact paused state.
+    if (!m_ModContext->IsPaused())
+        m_ModContext->RunPhysicsPostProcess();
 
     m_ModContext->ProcessVirtoolsFrame();
 
     m_ModContext->OnProcess();
 
     auto *inputHook = m_ModContext->GetInputManager();
-    if (!inputHook)
-        return CK_OK;
 
     if (scope.IsActive()) {
         SetOverlayCursorVisible(ImGui::GetIO().WantCaptureMouse);
@@ -194,7 +197,8 @@ CKERROR ModManager::PostProcess() {
         SetOverlayCursorVisible(false);
     }
 
-    inputHook->Process();
+    if (inputHook)
+        inputHook->Process();
 #if BML_ENABLE_UI_AUTOMATION
     // Test actions can reset or exit Virtools. Run them only after Render and
     // after the final per-frame pointer use, never from inside ImGuiRender().

@@ -10,12 +10,14 @@
 
 #include <utf8.h>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
 #ifdef CompareString
 #undef CompareString
+#endif
 #endif
 
 #include "imgui.h"
@@ -27,6 +29,7 @@ namespace BML::UI {
 namespace {
     constexpr float ReferenceViewportHeight = 1200.0f;
 
+#if defined(_WIN32)
     struct WindowsFallbackFace {
         const wchar_t *Filename;
         const char *Label;
@@ -36,6 +39,7 @@ namespace {
         {L"seguiemj.ttf", "Segoe UI Emoji"},
         {L"seguisym.ttf", "Segoe UI Symbol"},
     };
+#endif
 
     class CurrentContext final {
     public:
@@ -94,6 +98,7 @@ namespace {
         return {};
     }
 
+#if defined(_WIN32)
     std::string ResolveWindowsFace(std::wstring_view filename) {
         std::array<wchar_t, MAX_PATH> windowsDirectory{};
         const UINT length = GetWindowsDirectoryW(windowsDirectory.data(),
@@ -106,6 +111,7 @@ namespace {
         path.append(filename);
         return utils::FileExistsW(path) ? utils::Utf16ToUtf8(path) : std::string{};
     }
+#endif
 
     std::string FaceName(const std::string &path) {
         const std::string::size_type separator = path.find_last_of("/\\");
@@ -345,6 +351,7 @@ void FontRuntime::Apply() {
     }
 
     if (m_RequestedProfile.UseWindowsFallbacks) {
+#if defined(_WIN32)
         for (const WindowsFallbackFace &windowsFace : WindowsFallbackFaces) {
             const std::string path = ResolveWindowsFace(windowsFace.Filename);
             const bool loaded = LoadFallback(
@@ -353,6 +360,7 @@ void FontRuntime::Apply() {
             next.Sources.push_back({
                 windowsFace.Label, path, FontSourceOrigin::WindowsCatalog, loaded});
         }
+#endif
     }
 
     io.FontDefault = font;

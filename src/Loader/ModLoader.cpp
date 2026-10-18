@@ -2,18 +2,26 @@
 #include "Loader/ModContext.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#if defined(_WIN32)
 #include <io.h>
+#else
+#include <dlfcn.h>
+#endif
 #include <queue>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_set>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#endif
 
 #include "BML/Timer.h"
 #include "Logging/Logger.h"
@@ -37,6 +45,7 @@ using namespace BML;
 namespace {
     constexpr wchar_t PACKAGES_DIRECTORY_NAME[] = L"Packages";
 
+#if defined(_WIN32)
     HMODULE ModuleFromAddress(const void *address) {
         if (!address)
             return nullptr;
@@ -70,6 +79,21 @@ namespace {
             path.resize(path.size() * 2);
         }
     }
+#else
+    using HMODULE = void *;
+
+    HMODULE ModuleFromAddress(const void *address) {
+        Dl_info info{};
+        return address && dladdr(address, &info) != 0 ? info.dli_fbase : nullptr;
+    }
+
+    std::wstring ModuleDirectory(HMODULE module) {
+        Dl_info info{};
+        if (!module || dladdr(module, &info) == 0 || !info.dli_fname)
+            return {};
+        return utils::GetParentDirectoryW(utils::Utf8ToUtf16(info.dli_fname));
+    }
+#endif
 
     std::wstring ModuleDirectoryFromAddress(const void *address) {
         return ModuleDirectory(ModuleFromAddress(address));
@@ -264,7 +288,8 @@ bool ModLoader::LoadMods() {
             modSet.emplace(id);
         }
 
-        std::wstring path = std::wstring(m_Context.GetDirectory(BML_DIR_LOADER)) + L"\\Mods";
+        const std::wstring path = utils::CombinePathW(
+            m_Context.GetDirectory(BML_DIR_LOADER), L"Mods");
         if (utils::DirectoryExistsW(path)) {
 #if BML_ENABLE_ANGELSCRIPT
             CleanupStaleScriptReloadArtifacts(path, m_Context.GetLogger());
@@ -908,8 +933,8 @@ size_t ModLoader::ExploreMods(const std::wstring &path, std::vector<std::wstring
     if (path.empty() || !utils::DirectoryExistsW(path))
         return 0;
 
+#if defined(_WIN32)
     std::wstring p = path + L"\\*";
-
     _wfinddata_t fileinfo = {};
     auto handle = _wfindfirst(p.c_str(), &fileinfo);
     if (handle == -1)
@@ -940,6 +965,35 @@ size_t ModLoader::ExploreMods(const std::wstring &path, std::vector<std::wstring
     } while (_wfindnext(handle, &fileinfo) == 0);
 
     _findclose(handle);
+#else
+    std::error_code ec;
+    const std::filesystem::path directory(utils::Utf16ToUtf8(path));
+    for (std::filesystem::directory_iterator it(directory, ec), end;
+         it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file(ec))
+            continue;
+        const std::wstring fullPath = utils::Utf8ToUtf16(it->path().string());
+        std::wstring ext = utils::GetExtensionW(fullPath);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](wchar_t ch) { return std::towlower(ch); });
+        if (ext == L".zip") {
+            const std::wstring dest = BuildZipExtractionDirectory(
+                m_Context.GetDirectory(BML_DIR_TEMP), fullPath);
+            if (dest.empty() || !PrepareFreshDirectory(dest)) {
+                m_Context.GetLogger()->Error("Failed to create temp extraction directory: %s",
+                                             utils::Utf16ToUtf8(dest).c_str());
+                continue;
+            }
+            if (utils::ExtractZipW(fullPath, dest))
+                ExploreMods(dest, mods);
+            else
+                m_Context.GetLogger()->Error("Failed to extract zip file: %s",
+                                             utils::Utf16ToUtf8(fullPath).c_str());
+        } else if (ext == L".bmodp") {
+            mods.push_back(fullPath);
+        }
+    }
+#endif
 
     return mods.size();
 }
@@ -1020,6 +1074,7 @@ std::shared_ptr<void> ModLoader::LoadLib(const wchar_t *path) {
     if (!path || path[0] == '\0')
         return nullptr;
 
+#if defined(_WIN32)
     HMODULE dllHandle = ::LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!dllHandle) {
         const DWORD error = ::GetLastError();
@@ -1034,6 +1089,16 @@ std::shared_ptr<void> ModLoader::LoadLib(const wchar_t *path) {
     return std::shared_ptr<void>(dllHandle, [](void *ptr) {
         ::FreeLibrary(static_cast<HMODULE>(ptr));
     });
+#else
+    const std::string utf8Path = utils::Utf16ToUtf8(path);
+    void *dllHandle = ::dlopen(utf8Path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!dllHandle) {
+        m_Context.GetLogger()->Error("Failed to load native Mod library %s: %s.",
+                                     utf8Path.c_str(), ::dlerror());
+        return nullptr;
+    }
+    return std::shared_ptr<void>(dllHandle, [](void *ptr) { ::dlclose(ptr); });
+#endif
 }
 
 bool ModLoader::UnloadLib(void *dllHandle) {
@@ -1060,7 +1125,11 @@ void ModLoader::DestroyNativeMod(void *dllHandle, IMod *mod, const char *modLabe
 
     try {
         auto func = reinterpret_cast<BMLExitFunc>(
+#if defined(_WIN32)
             ::GetProcAddress(static_cast<HMODULE>(dllHandle), EXIT_SYMBOL));
+#else
+            ::dlsym(dllHandle, EXIT_SYMBOL));
+#endif
         if (!func) {
             if (m_Context.GetLogger()) {
                 m_Context.GetLogger()->Warn(
@@ -1108,7 +1177,12 @@ IMod *ModLoader::LoadMod(const std::wstring &path) {
     constexpr const char *ENTRY_SYMBOL = "BMLEntry";
     typedef IMod *(BML_CDECL *BMLEntryFunc)(IBML *);
 
-    auto func = reinterpret_cast<BMLEntryFunc>(::GetProcAddress(static_cast<HMODULE>(dllHandle.get()), ENTRY_SYMBOL));
+    auto func = reinterpret_cast<BMLEntryFunc>(
+#if defined(_WIN32)
+        ::GetProcAddress(static_cast<HMODULE>(dllHandle.get()), ENTRY_SYMBOL));
+#else
+        ::dlsym(dllHandle.get(), ENTRY_SYMBOL));
+#endif
     if (!func) {
         m_Context.GetLogger()->Error("Native Mod DLL %s does not export the required symbol: %s.",
                         modPath.c_str(), ENTRY_SYMBOL);
@@ -1577,6 +1651,14 @@ bool ModLoader::UnloadMod(const std::string &id) {
 }
 
 bool ModLoader::RegisterBuiltinMods() {
+#if defined(BML_NATIVE_BALLANCED)
+    if (const char *disabled = std::getenv("BML_NATIVE_DISABLE_BUILTINS");
+        disabled && disabled[0] != '\0' && disabled[0] != '0') {
+        m_Context.GetLogger()->Warn(
+            "Native diagnostic: built-in mods are disabled by BML_NATIVE_DISABLE_BUILTINS.");
+        return true;
+    }
+#endif
     m_BMLMod = new BMLMod(&m_Context);
     if (!RegisterMod(m_BMLMod))
         return false;
@@ -1729,7 +1811,8 @@ std::string ModLoader::GetNativeModOwnerId(
 
     std::shared_lock<std::shared_mutex> registryLock(m_ModRegistryMutex);
 
-    HMODULE const bmlModule = ModuleFromAddress(&BML_GetModContext);
+    HMODULE const bmlModule = ModuleFromAddress(reinterpret_cast<const void *>(
+        reinterpret_cast<std::uintptr_t>(&BML_GetModContext)));
     if (bmlModule && callerModule == bmlModule) {
         if (!requestedOwnerId || !*requestedOwnerId)
             return {};
@@ -2034,8 +2117,6 @@ bool ModLoader::ResolveDependencies() {
 }
 
 void ModLoader::FillCallbackMap(IMod *mod) {
-    std::lock_guard<std::mutex> lock(m_StateMutex);
-
     class BlankMod : IMod {
     public:
         explicit BlankMod(IBML *bml) : IMod(bml) {}
@@ -2047,6 +2128,11 @@ void ModLoader::FillCallbackMap(IMod *mod) {
         const char *GetDescription() override { return ""; }
         DECLARE_BML_VERSION;
     } blank(&m_Context);
+
+    // Construct the probe before taking the dependency lock. IMod's
+    // destructor unregisters its dependency state, so reverse destruction
+    // order must release this non-recursive mutex before destroying blank.
+    std::lock_guard<std::mutex> lock(m_StateMutex);
 
     void **vtable[2] = {
         *reinterpret_cast<void ***>(&blank),
