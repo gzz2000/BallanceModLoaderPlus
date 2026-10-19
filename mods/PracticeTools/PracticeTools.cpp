@@ -71,8 +71,9 @@ void PracticeTools::OnProcess() {
         return;
 
     const bool playing = m_BML->IsPlaying();
-    const bool fullSpeedDown = playing && m_FullSpeedKey &&
-                               m_Input->IsKeyDown(m_FullSpeedKey);
+    // The temporary override is intentionally global. In particular it must
+    // also release an explicit practice cap during the intro and menus.
+    const bool fullSpeedDown = m_FullSpeedKey && m_Input->IsKeyDown(m_FullSpeedKey);
     const bool saveDown = m_SaveKey && m_Input->IsKeyDown(m_SaveKey);
     const bool restoreDown = m_RestoreKey && m_Input->IsKeyDown(m_RestoreKey);
     if (fullSpeedDown && !m_FullSpeedActive)
@@ -94,6 +95,8 @@ void PracticeTools::BeginFullSpeed() {
     m_PreviousFrameMode = static_cast<CK_FRAMERATE_LIMITS>(
         m_Time->GetLimitOptions() & CK_FRAMERATE_MASK);
     m_PreviousFrameLimit = m_Time->GetFrameRateLimit();
+    m_PreviousProcessRate = m_Time->GetFixedProcessRate();
+    m_Time->SetFixedProcessRate(264.0f);
     m_Time->ChangeLimitOptions(CK_FRAMERATE_FREE);
     m_FullSpeedActive = true;
     GetLogger()->Info("Full-speed override enabled (264 samples/s).");
@@ -104,49 +107,89 @@ void PracticeTools::EndFullSpeed() {
         return;
     if (m_PreviousFrameMode == CK_FRAMERATE_LIMIT && m_PreviousFrameLimit > 0.0f)
         m_Time->SetFrameRateLimit(m_PreviousFrameLimit);
+    if (m_PreviousProcessRate > 0.0f)
+        m_Time->SetFixedProcessRate(m_PreviousProcessRate);
     m_Time->ChangeLimitOptions(m_PreviousFrameMode);
     m_FullSpeedActive = false;
     GetLogger()->Info("Full-speed override released; restored mode %d at %.3f Hz.",
                       static_cast<int>(m_PreviousFrameMode), m_PreviousFrameLimit);
 }
 
-bool PracticeTools::IsSnapshotObject(CKObject *object) {
-    if (!object || object->IsToBeDeleted())
-        return false;
-    const CK_CLASSID cid = object->GetClassID();
-    return CKIsChildClassOf(cid, CKCID_PARAMETER) ||
-           CKIsChildClassOf(cid, CKCID_BEHAVIOR) ||
-           CKIsChildClassOf(cid, CKCID_DATAARRAY) ||
-           CKIsChildClassOf(cid, CKCID_3DENTITY) ||
-           CKIsChildClassOf(cid, CKCID_OBJECTANIMATION) ||
-           CKIsChildClassOf(cid, CKCID_WAVESOUND) ||
-           CKIsChildClassOf(cid, CKCID_MIDISOUND) ||
-           cid == CKCID_BEHAVIORIO || cid == CKCID_BEHAVIORLINK ||
-           cid == CKCID_PARAMETEROPERATION || cid == CKCID_SYNCHRO ||
-           cid == CKCID_STATE;
-}
-
 void PracticeTools::SaveState() {
     if (!m_Context || !m_BML->IsPlaying())
         return;
 
+    // Snapshot values are represented by temporary dynamic parameters. Drop
+    // the previous snapshot before enumerating the context so those private
+    // copies can never recursively become part of the next snapshot.
+    ClearState();
     std::unique_ptr<Snapshot> snapshot(new Snapshot());
     const XObjectPointerArray &allObjects =
         m_Context->GetObjectListByType(CKCID_OBJECT, TRUE);
     std::vector<CKObject *> objects(allObjects.Begin(), allObjects.End());
-    snapshot->objects.reserve(objects.size());
 
     for (CKObject *object : objects) {
-        if (!IsSnapshotObject(object))
+        if (!object || object->IsToBeDeleted())
             continue;
-        CKStateChunk *chunk = CKSaveObjectState(object, CK_STATESAVE_ALL);
-        if (chunk)
-            snapshot->objects.push_back({object->GetID(), chunk});
+
+        const CK_CLASSID cid = object->GetClassID();
+        if (CKIsChildClassOf(cid, CKCID_PARAMETEROUT) ||
+            CKIsChildClassOf(cid, CKCID_PARAMETERLOCAL)) {
+            auto *parameter = static_cast<CKParameter *>(object);
+            CKParameterOut *copy = m_Context->CreateCKParameterOut(
+                nullptr, parameter->GetGUID(), TRUE);
+            if (copy && copy->CopyValue(parameter, FALSE) == CK_OK)
+                snapshot->parameters.push_back({object->GetID(), copy});
+            else if (copy)
+                m_Context->DestroyObject(copy);
+            continue;
+        }
+
+        if (CKIsChildClassOf(cid, CKCID_DATAARRAY)) {
+            auto *array = static_cast<CKDataArray *>(object);
+            ArrayState state;
+            state.id = object->GetID();
+            state.rows = array->GetRowCount();
+            state.columns = array->GetColumnCount();
+            for (int row = 0; row < state.rows; ++row) {
+                for (int column = 0; column < state.columns; ++column) {
+                    const CK_ARRAYTYPE type = array->GetColumnType(column);
+                    // Parameter cells are already captured through their
+                    // CKParameterOut objects above. Never rebuild array
+                    // structure: CKDataArray::Load destroys those objects and
+                    // made a saved state unsafe to restore more than once.
+                    if (type == CKARRAYTYPE_PARAMETER)
+                        continue;
+                    ArrayCellState cell;
+                    cell.row = row;
+                    cell.column = column;
+                    cell.type = type;
+                    if (type == CKARRAYTYPE_STRING) {
+                        CKSTRING value = nullptr;
+                        if (array->GetElementValue(row, column, &value) && value)
+                            cell.string = value;
+                    } else {
+                        array->GetElementValue(row, column, &cell.scalar);
+                    }
+                    state.cells.push_back(std::move(cell));
+                }
+            }
+            snapshot->arrays.push_back(std::move(state));
+            continue;
+        }
+
+        if (CKIsChildClassOf(cid, CKCID_3DENTITY)) {
+            auto *entity = static_cast<CK3dEntity *>(object);
+            snapshot->entities.push_back(
+                {object->GetID(), entity->GetWorldMatrix(), entity->IsVisible() != FALSE});
+        }
     }
 
     if (TT_PhysicsCaptureSnapshot(m_Context, &snapshot->physics) != CK_OK) {
-        for (ObjectState &state : snapshot->objects)
-            DeleteCKStateChunk(state.chunk);
+        for (ObjectState &state : snapshot->parameters) {
+            if (state.value)
+                m_Context->DestroyObject(state.value);
+        }
         m_BML->SendIngameMessage("Unable to capture physics state");
         return;
     }
@@ -156,10 +199,10 @@ void PracticeTools::SaveState() {
         BML::Speedrun::ReadTimerRunning(snapshot->timerRunning) == BML_OK;
     snapshot->timerElapsed = timer.ElapsedTime;
 
-    ClearState();
     m_Snapshot = std::move(snapshot);
-    GetLogger()->Info("Captured practice state: %zu Virtools objects%s.",
-                      m_Snapshot->objects.size(),
+    GetLogger()->Info("Captured practice state: %zu parameters, %zu arrays, %zu entities%s.",
+                      m_Snapshot->parameters.size(), m_Snapshot->arrays.size(),
+                      m_Snapshot->entities.size(),
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
     m_BML->SendIngameMessage("Practice state saved");
 }
@@ -172,12 +215,42 @@ void PracticeTools::RestoreState() {
         return;
     }
 
-    // Parameters and behavior activation state are restored before entities;
-    // IVP is restored last because it is authoritative for physical transforms.
-    for (const ObjectState &state : m_Snapshot->objects) {
-        CKObject *object = m_Context->GetObject(state.id);
-        if (object && state.chunk)
-            CKReadObjectState(object, state.chunk);
+    // Restore values without loading whole CKStateChunks. Whole-object loads
+    // rewrite behavior/parameter wiring, and CKDataArray::Load destroys owned
+    // parameters; both operations are inappropriate for a repeatable runtime
+    // rewind and were responsible for lost controls and the second-restore
+    // crash.
+    for (const ArrayState &state : m_Snapshot->arrays) {
+        auto *array = CKDataArray::Cast(m_Context->GetObject(state.id));
+        if (!array || array->GetRowCount() != state.rows ||
+            array->GetColumnCount() != state.columns) {
+            GetLogger()->Warn("Skipped changed data array %u during restore.", state.id);
+            continue;
+        }
+        for (const ArrayCellState &cell : state.cells) {
+            if (array->GetColumnType(cell.column) != cell.type)
+                continue;
+            if (cell.type == CKARRAYTYPE_STRING)
+                array->SetElementValue(cell.row, cell.column,
+                                       const_cast<char *>(cell.string.c_str()));
+            else
+                array->SetElementValue(cell.row, cell.column,
+                                       const_cast<CKDWORD *>(&cell.scalar));
+        }
+    }
+
+    for (const ObjectState &state : m_Snapshot->parameters) {
+        auto *parameter = CKParameter::Cast(m_Context->GetObject(state.id));
+        if (parameter && state.value && parameter->GetGUID() == state.value->GetGUID())
+            parameter->CopyValue(state.value, FALSE);
+    }
+
+    for (const EntityState &state : m_Snapshot->entities) {
+        auto *entity = CK3dEntity::Cast(m_Context->GetObject(state.id));
+        if (!entity)
+            continue;
+        entity->SetWorldMatrix(state.world);
+        entity->Show(state.visible ? CKSHOW : CKHIDE);
     }
 
     if (TT_PhysicsRestoreSnapshot(m_Context, m_Snapshot->physics) != CK_OK) {
@@ -189,8 +262,9 @@ void PracticeTools::RestoreState() {
                                        m_Snapshot->timerRunning) != BML_OK) {
         GetLogger()->Warn("Could not restore the captured SR timer state.");
     }
-    GetLogger()->Info("Restored practice state: %zu Virtools objects%s.",
-                      m_Snapshot->objects.size(),
+    GetLogger()->Info("Restored practice state: %zu parameters, %zu arrays, %zu entities%s.",
+                      m_Snapshot->parameters.size(), m_Snapshot->arrays.size(),
+                      m_Snapshot->entities.size(),
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
     m_BML->SendIngameMessage("Practice state restored");
 }
@@ -198,10 +272,14 @@ void PracticeTools::RestoreState() {
 void PracticeTools::ClearState() {
     if (!m_Snapshot)
         return;
-    for (ObjectState &state : m_Snapshot->objects)
-        DeleteCKStateChunk(state.chunk);
     if (m_Snapshot->physics)
         TT_PhysicsDestroySnapshot(m_Snapshot->physics);
+    if (m_Context) {
+        for (ObjectState &state : m_Snapshot->parameters) {
+            if (state.value && !state.value->IsToBeDeleted())
+                m_Context->DestroyObject(state.value);
+        }
+    }
     m_Snapshot.reset();
 }
 

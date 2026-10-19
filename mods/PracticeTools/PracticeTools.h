@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <BML/BMLAll.h>
@@ -19,7 +20,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.0"; }
+    const char *GetVersion() override { return "0.1.1"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -36,18 +37,40 @@ public:
 private:
     struct ObjectState {
         CK_ID id = 0;
-        CKStateChunk *chunk = nullptr;
+        CKParameterOut *value = nullptr;
+    };
+
+    struct ArrayCellState {
+        int row = 0;
+        int column = 0;
+        CK_ARRAYTYPE type = CKARRAYTYPE_INT;
+        CKDWORD scalar = 0;
+        std::string string;
+    };
+
+    struct ArrayState {
+        CK_ID id = 0;
+        int rows = 0;
+        int columns = 0;
+        std::vector<ArrayCellState> cells;
+    };
+
+    struct EntityState {
+        CK_ID id = 0;
+        VxMatrix world;
+        bool visible = false;
     };
 
     struct Snapshot {
-        std::vector<ObjectState> objects;
+        std::vector<ObjectState> parameters;
+        std::vector<ArrayState> arrays;
+        std::vector<EntityState> entities;
         TT_PhysicsSnapshotHandle physics = nullptr;
         float timerElapsed = 0.0f;
         bool timerRunning = false;
         bool timerCaptured = false;
     };
 
-    static bool IsSnapshotObject(CKObject *object);
     void RefreshSettings();
     void BeginFullSpeed();
     void EndFullSpeed();
@@ -70,5 +93,6 @@ private:
     bool m_RestoreDown = false;
     CK_FRAMERATE_LIMITS m_PreviousFrameMode = CK_FRAMERATE_SYNC;
     float m_PreviousFrameLimit = 60.0f;
+    float m_PreviousProcessRate = 264.0f;
     std::unique_ptr<Snapshot> m_Snapshot;
 };

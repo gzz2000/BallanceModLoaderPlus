@@ -471,11 +471,17 @@ void BMLMod::ApplyFrameRateSettings() {
 void BMLMod::AdjustFrameRate(bool sync, float limit) {
     if (sync) {
         m_TimeManager->ChangeLimitOptions(CK_FRAMERATE_SYNC);
+        m_TimeManager->SetFixedProcessRate(264.0f);
     } else if (limit > 0) {
         m_TimeManager->ChangeLimitOptions(CK_FRAMERATE_LIMIT);
         m_TimeManager->SetFrameRateLimit(limit);
+        // The native Player separates presentation from deterministic game
+        // sampling. BML's explicit limiter intentionally controls both so it
+        // retains the original speedrun-practice slow-motion behavior.
+        m_TimeManager->SetFixedProcessRate(limit < 264.0f ? limit : 264.0f);
     } else {
         m_TimeManager->ChangeLimitOptions(CK_FRAMERATE_FREE);
+        m_TimeManager->SetFixedProcessRate(264.0f);
     }
 }
 

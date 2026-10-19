@@ -8,9 +8,12 @@ Native macOS practice utilities for Ballanced/BML+.
 - Press `F5` to capture an in-memory state of the current level.
 - Press `F8` to restore the latest state.
 
-The snapshot includes Virtools behavior, parameter, data-array, 3D entity,
-animation and sound state together with IVP transforms, linear/angular
-velocities, queued velocity changes, collision enablement and sleep state.
+The snapshot includes Virtools parameter values, fixed-shape data-array values
+and 3D entity state together with IVP transforms, linear/angular velocities,
+queued velocity changes, collision enablement and sleep state. Runtime values
+are restored in place: behavior wiring and data-array-owned objects are never
+rebuilt, so controls remain connected and the same snapshot can be restored
+repeatedly.
 The BML+ SR timer value and its running/paused state are restored as well.
 The 2D object hierarchy is deliberately left intact; its visible state is
 reconstructed from the restored gameplay parameters and behaviors.
