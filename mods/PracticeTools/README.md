@@ -11,10 +11,10 @@ Native macOS practice utilities for Ballanced/BML+.
 The snapshot includes Virtools parameter and fixed-shape data-array values,
 hierarchy-relative 3D entities, 2D HUD geometry and sprite slots, both master
 and object animation cursors, scene/script activation, message waits, global
-state/synchronization objects, behavior-graph IO and delayed-link scheduler
+state/synchronization objects, ordered group membership, behavior-graph IO and delayed-link scheduler
 state, and IVP transforms, velocities, queued changes, collision enablement and
-sleep state. Dynamic objects created after the snapshot are removed on rewind,
-so transient reward/death effects cannot accumulate across repeated restores.
+sleep state. Snapshot value objects are reused by overwrite saves, avoiding a
+large deferred delete/recreate pass and keeping repeated saves bounded.
 Runtime values and the Virtools absolute simulation clock/process ordinal are
 restored in place: behavior wiring and data-array-owned objects are never
 rebuilt, so controls remain connected and one snapshot remains repeatable.

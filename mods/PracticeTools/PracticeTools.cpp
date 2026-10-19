@@ -1,5 +1,7 @@
 #include "PracticeTools.h"
 
+#include <chrono>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -134,21 +136,41 @@ void PracticeTools::SaveState() {
     if (!m_Context || !m_BML->IsPlaying())
         return;
 
-    // Snapshot values are represented by temporary dynamic parameters. Drop
-    // the previous snapshot before enumerating the context so those private
-    // copies can never recursively become part of the next snapshot.
-    ClearState();
+    const auto captureStarted = std::chrono::steady_clock::now();
+    // Keep the previous value objects alive and reuse them. Destroying and
+    // recreating thousands of registered CKParameterOut objects made every
+    // overwrite save much slower than the first one and deferred deletion
+    // left a large amount of avoidable work for the following frame.
+    std::unique_ptr<Snapshot> previous = std::move(m_Snapshot);
+    std::unordered_set<CKObject *> privateParameters;
+    std::unordered_map<CK_ID, ObjectState *> reusableParameters;
+    std::unordered_map<CK_ID, ArrayState *> reusableArrays;
+    if (previous) {
+        for (ObjectState &state : previous->parameters) {
+            if (state.value)
+                privateParameters.insert(state.value);
+            reusableParameters[state.id] = &state;
+        }
+        for (ArrayState &array : previous->arrays) {
+            reusableArrays[array.id] = &array;
+            for (ArrayCellState &cell : array.cells) {
+                if (cell.parameter)
+                    privateParameters.insert(cell.parameter);
+            }
+        }
+    }
     std::unique_ptr<Snapshot> snapshot(new Snapshot());
     const XObjectPointerArray &allObjects =
         m_Context->GetObjectListByType(CKCID_OBJECT, TRUE);
     std::vector<CKObject *> objects(allObjects.Begin(), allObjects.End());
+    std::unordered_set<CKObject *> liveObjects(objects.begin(), objects.end());
+    size_t invalidArrayParameters = 0;
     CKScene *scene = m_Context->GetCurrentScene();
 
     for (CKObject *object : objects) {
-        if (!object || object->IsToBeDeleted())
+        if (!object || object->IsToBeDeleted() ||
+            privateParameters.find(object) != privateParameters.end())
             continue;
-
-        snapshot->objectIds.push_back(object->GetID());
 
         const CK_CLASSID cid = object->GetClassID();
         if (CKIsChildClassOf(cid, CKCID_BEHAVIOR)) {
@@ -213,11 +235,36 @@ void PracticeTools::SaveState() {
                     {object->GetID(), scene->IsObjectActive(sceneObject) != FALSE});
         }
 
+        if (CKIsChildClassOf(cid, CKCID_GROUP)) {
+            auto *group = static_cast<CKGroup *>(object);
+            GroupState state;
+            state.id = object->GetID();
+            for (int i = 0; i < group->GetObjectCount(); ++i) {
+                if (CKBeObject *member = group->GetObject(i))
+                    state.members.push_back(member->GetID());
+            }
+            snapshot->groups.push_back(std::move(state));
+        }
+
         if (CKIsChildClassOf(cid, CKCID_PARAMETEROUT) ||
             CKIsChildClassOf(cid, CKCID_PARAMETERLOCAL)) {
             auto *parameter = static_cast<CKParameter *>(object);
-            CKParameterOut *copy = m_Context->CreateCKParameterOut(
-                nullptr, parameter->GetGUID(), TRUE);
+            // Array-owned cells are captured below using their stable
+            // row/column identity. Capturing them here too doubles both the
+            // memory and CopyValue work and was the reason the original code
+            // needed a special second pass in the first place.
+            if (CKDataArray::Cast(parameter->GetOwner()))
+                continue;
+            CKParameterOut *copy = nullptr;
+            auto reusable = reusableParameters.find(object->GetID());
+            if (reusable != reusableParameters.end() && reusable->second->value &&
+                reusable->second->value->GetGUID() == parameter->GetGUID()) {
+                copy = reusable->second->value;
+                reusable->second->value = nullptr;
+            } else {
+                copy = m_Context->CreateCKParameterOut(
+                    nullptr, parameter->GetGUID(), TRUE);
+            }
             if (copy && copy->CopyValue(parameter, FALSE) == CK_OK)
                 snapshot->parameters.push_back({object->GetID(), copy});
             else if (copy)
@@ -231,6 +278,13 @@ void PracticeTools::SaveState() {
             state.id = object->GetID();
             state.rows = array->GetRowCount();
             state.columns = array->GetColumnCount();
+            ArrayState *oldArray = nullptr;
+            auto reusableArray = reusableArrays.find(state.id);
+            if (reusableArray != reusableArrays.end() &&
+                reusableArray->second->rows == state.rows &&
+                reusableArray->second->columns == state.columns) {
+                oldArray = reusableArray->second;
+            }
             for (int row = 0; row < state.rows; ++row) {
                 for (int column = 0; column < state.columns; ++column) {
                     const CK_ARRAYTYPE type = array->GetColumnType(column);
@@ -246,11 +300,35 @@ void PracticeTools::SaveState() {
                         CKUINTPTR *element = array->GetElement(row, column);
                         auto *parameter = element
                             ? reinterpret_cast<CKParameterOut *>(*element) : nullptr;
-                        if (parameter) {
-                            cell.parameter = m_Context->CreateCKParameterOut(
-                                nullptr, parameter->GetGUID(), TRUE);
-                            if (cell.parameter)
-                                cell.parameter->CopyValue(parameter, FALSE);
+                        // A data array can temporarily retain a stale pointer
+                        // while a deferred deletion is pending. Never
+                        // dereference a cell until the object manager's live
+                        // set confirms that the pointer is still registered.
+                        if (parameter && liveObjects.find(parameter) != liveObjects.end() &&
+                            !parameter->IsToBeDeleted() &&
+                            CKIsChildClassOf(parameter, CKCID_PARAMETER)) {
+                            if (oldArray) {
+                                const size_t index = static_cast<size_t>(row) * state.columns + column;
+                                if (index < oldArray->cells.size()) {
+                                    ArrayCellState &oldCell = oldArray->cells[index];
+                                    if (oldCell.parameter &&
+                                        oldCell.parameter->GetGUID() == parameter->GetGUID()) {
+                                        cell.parameter = oldCell.parameter;
+                                        oldCell.parameter = nullptr;
+                                    }
+                                }
+                            }
+                            if (!cell.parameter)
+                                cell.parameter = m_Context->CreateCKParameterOut(
+                                    nullptr, parameter->GetGUID(), TRUE);
+                            if (cell.parameter &&
+                                cell.parameter->CopyValue(parameter, FALSE) != CK_OK) {
+                                m_Context->DestroyObject(cell.parameter);
+                                cell.parameter = nullptr;
+                                ++invalidArrayParameters;
+                            }
+                        } else if (parameter) {
+                            ++invalidArrayParameters;
                         }
                     } else if (type == CKARRAYTYPE_STRING) {
                         CKSTRING value = nullptr;
@@ -302,16 +380,8 @@ void PracticeTools::SaveState() {
     }
 
     if (TT_PhysicsCaptureSnapshot(m_Context, &snapshot->physics) != CK_OK) {
-        for (ObjectState &state : snapshot->parameters) {
-            if (state.value)
-                m_Context->DestroyObject(state.value);
-        }
-        for (ArrayState &array : snapshot->arrays) {
-            for (ArrayCellState &cell : array.cells) {
-                if (cell.parameter)
-                    m_Context->DestroyObject(cell.parameter);
-            }
-        }
+        DestroySnapshot(snapshot.get());
+        DestroySnapshot(previous.get());
         m_BML->SendIngameMessage("Unable to capture physics state");
         return;
     }
@@ -329,7 +399,10 @@ void PracticeTools::SaveState() {
         snapshot->clockCaptured = true;
     }
 
+    DestroySnapshot(previous.get());
     m_Snapshot = std::move(snapshot);
+    const auto captureMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - captureStarted).count();
     GetLogger()->Info("Captured practice state: %zu parameters, %zu arrays, %zu 3D/%zu 2D entities, "
                       "%zu behaviors, %zu links, %zu object/%zu master animations, %zu message waits%s.",
                       m_Snapshot->parameters.size(), m_Snapshot->arrays.size(),
@@ -339,6 +412,11 @@ void PracticeTools::SaveState() {
                       m_Snapshot->objectAnimations.size(), m_Snapshot->animations.size(),
                       m_Snapshot->messageWaits.size(),
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
+    GetLogger()->Info("Practice state capture completed in %lld ms.",
+                      static_cast<long long>(captureMilliseconds));
+    if (invalidArrayParameters)
+        GetLogger()->Warn("Skipped %zu invalid data-array parameter cells.",
+                          invalidArrayParameters);
     if (m_Snapshot->scoreCaptured)
         GetLogger()->Info("Snapshot score audit: Energy.Points=%d CurrentLevel.Points=%d.",
                           m_Snapshot->energyPoints, m_Snapshot->levelPoints);
@@ -355,42 +433,10 @@ void PracticeTools::RestoreState() {
 
     int scoreBefore = 0;
     ReadArrayInt(m_BML, "Energy", 0, scoreBefore);
-
-    // Rewind object topology as well as object values. Award, death and
-    // particle scripts can create dynamic scene objects after the snapshot;
-    // leaving those alive makes each repeated restore accumulate another
-    // visual instance. Snapshot-owned parameter clones are dynamic too, so
-    // explicitly protect them from this pruning pass.
-    std::unordered_set<CK_ID> savedObjects(
-        m_Snapshot->objectIds.begin(), m_Snapshot->objectIds.end());
-    std::unordered_set<CK_ID> snapshotObjects;
-    for (const ObjectState &state : m_Snapshot->parameters) {
-        if (state.value)
-            snapshotObjects.insert(state.value->GetID());
-    }
-    for (const ArrayState &array : m_Snapshot->arrays) {
-        for (const ArrayCellState &cell : array.cells) {
-            if (cell.parameter)
-                snapshotObjects.insert(cell.parameter->GetID());
-        }
-    }
-    const XObjectPointerArray &currentObjects =
+    const XObjectPointerArray &restoreObjects =
         m_Context->GetObjectListByType(CKCID_OBJECT, TRUE);
-    std::vector<CK_ID> createdAfterSnapshot;
-    for (CKObject *object : currentObjects) {
-        if (object && !object->IsToBeDeleted() && object->IsDynamic() &&
-            savedObjects.find(object->GetID()) == savedObjects.end() &&
-            snapshotObjects.find(object->GetID()) == snapshotObjects.end()) {
-            createdAfterSnapshot.push_back(object->GetID());
-        }
-    }
-    for (CK_ID id : createdAfterSnapshot) {
-        if (CKObject *object = m_Context->GetObject(id))
-            m_Context->DestroyObject(object, CK_DESTROY_TEMPOBJECT);
-    }
-    if (!createdAfterSnapshot.empty())
-        GetLogger()->Info("Removed %zu post-snapshot dynamic objects.",
-                          createdAfterSnapshot.size());
+    std::unordered_set<CKObject *> restoreLiveObjects(
+        restoreObjects.Begin(), restoreObjects.End());
 
     // Restore values without loading whole CKStateChunks. Whole-object loads
     // rewrite behavior/parameter wiring, and CKDataArray::Load destroys owned
@@ -411,7 +457,10 @@ void PracticeTools::RestoreState() {
                 CKUINTPTR *element = array->GetElement(cell.row, cell.column);
                 auto *parameter = element
                     ? reinterpret_cast<CKParameterOut *>(*element) : nullptr;
-                if (parameter && cell.parameter &&
+                if (parameter &&
+                    restoreLiveObjects.find(parameter) != restoreLiveObjects.end() &&
+                    !parameter->IsToBeDeleted() &&
+                    CKIsChildClassOf(parameter, CKCID_PARAMETER) && cell.parameter &&
                     parameter->GetGUID() == cell.parameter->GetGUID())
                     parameter->CopyValue(cell.parameter, FALSE);
             } else if (cell.type == CKARRAYTYPE_STRING)
@@ -500,6 +549,22 @@ void PracticeTools::RestoreState() {
             object->RestoreObjectInCriticalSection(state.owner);
     }
 
+    // Collectibles and checkpoints move objects between Virtools groups to
+    // represent available/consumed state. Visibility alone is insufficient:
+    // restoring it without group membership leaves the renderer and gameplay
+    // scripts disagreeing about which score balls still exist.
+    for (const GroupState &state : m_Snapshot->groups) {
+        auto *group = CKGroup::Cast(m_Context->GetObject(state.id));
+        if (!group)
+            continue;
+        group->Clear();
+        for (CK_ID memberId : state.members) {
+            auto *member = CKBeObject::Cast(m_Context->GetObject(memberId));
+            if (member)
+                group->AddObject(member);
+        }
+    }
+
     CKScene *scene = m_Context->GetCurrentScene();
     if (scene) {
         for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
@@ -566,6 +631,11 @@ void PracticeTools::RestoreState() {
     }
     if (m_Snapshot->clockCaptured)
         m_Time->RestoreRuntimeClock(m_Snapshot->absoluteTime, m_Snapshot->mainTick);
+    // Do not carry a key-down bit across a checkpoint or rewind boundary.
+    // Ballance's force controller consumes this 256-byte Virtools keyboard
+    // state directly; a missed key-up event otherwise applies directional
+    // force forever even though the physical key has been released.
+    ClearMovementInput();
     GetLogger()->Info("Restored practice state: %zu parameters, %zu arrays, %zu 3D/%zu 2D entities, "
                       "%zu behaviors, %zu links, %zu object/%zu master animations, %zu message waits%s.",
                       m_Snapshot->parameters.size(), m_Snapshot->arrays.size(),
@@ -591,21 +661,31 @@ void PracticeTools::RestoreState() {
 void PracticeTools::ClearState() {
     if (!m_Snapshot)
         return;
-    if (m_Snapshot->physics)
-        TT_PhysicsDestroySnapshot(m_Snapshot->physics);
+    DestroySnapshot(m_Snapshot.get());
+    m_Snapshot.reset();
+}
+
+void PracticeTools::DestroySnapshot(Snapshot *snapshot) {
+    if (!snapshot)
+        return;
+    if (snapshot->physics) {
+        TT_PhysicsDestroySnapshot(snapshot->physics);
+        snapshot->physics = nullptr;
+    }
     if (m_Context) {
-        for (ObjectState &state : m_Snapshot->parameters) {
+        for (ObjectState &state : snapshot->parameters) {
             if (state.value && !state.value->IsToBeDeleted())
                 m_Context->DestroyObject(state.value);
+            state.value = nullptr;
         }
-        for (ArrayState &array : m_Snapshot->arrays) {
+        for (ArrayState &array : snapshot->arrays) {
             for (ArrayCellState &cell : array.cells) {
                 if (cell.parameter && !cell.parameter->IsToBeDeleted())
                     m_Context->DestroyObject(cell.parameter);
+                cell.parameter = nullptr;
             }
         }
     }
-    m_Snapshot.reset();
 }
 
 void PracticeTools::OnPreLoadLevel() {
@@ -627,4 +707,24 @@ void PracticeTools::OnPreNextLevel() {
     ClearState();
     m_SaveDown = false;
     m_RestoreDown = false;
+}
+
+void PracticeTools::OnBallNavActive() {
+    // Checkpoint respawns and restored launch sequences can reactivate the
+    // controller without delivering the key-up event that occurred while it
+    // was inactive. Clear only movement keys; menu and practice shortcuts are
+    // deliberately left untouched.
+    ClearMovementInput();
+}
+
+void PracticeTools::ClearMovementInput() {
+    if (!m_Input)
+        return;
+    unsigned char *keyboard = m_Input->GetKeyboardState();
+    if (!keyboard)
+        return;
+    keyboard[CKKEY_UP] = 0;
+    keyboard[CKKEY_DOWN] = 0;
+    keyboard[CKKEY_LEFT] = 0;
+    keyboard[CKKEY_RIGHT] = 0;
 }

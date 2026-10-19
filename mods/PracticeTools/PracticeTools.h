@@ -20,7 +20,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.4"; }
+    const char *GetVersion() override { return "0.1.5"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -33,6 +33,7 @@ public:
     void OnPreLoadLevel() override;
     void OnPreExitLevel() override;
     void OnPreNextLevel() override;
+    void OnBallNavActive() override;
 
 private:
     struct ObjectState {
@@ -129,8 +130,12 @@ private:
         bool active = false;
     };
 
+    struct GroupState {
+        CK_ID id = 0;
+        std::vector<CK_ID> members;
+    };
+
     struct Snapshot {
-        std::vector<CK_ID> objectIds;
         std::vector<ObjectState> parameters;
         std::vector<ArrayState> arrays;
         std::vector<EntityState> entities;
@@ -141,6 +146,7 @@ private:
         std::vector<ObjectAnimationState> objectAnimations;
         std::vector<AnimationState> animations;
         std::vector<SceneObjectState> sceneObjects;
+        std::vector<GroupState> groups;
         std::vector<StateObjectState> stateObjects;
         std::vector<SynchroState> synchros;
         std::vector<CriticalSectionState> criticalSections;
@@ -163,6 +169,8 @@ private:
     void SaveState();
     void RestoreState();
     void ClearState();
+    void DestroySnapshot(Snapshot *snapshot);
+    void ClearMovementInput();
 
     CKContext *m_Context = nullptr;
     CKTimeManager *m_Time = nullptr;
