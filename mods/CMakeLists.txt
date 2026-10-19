@@ -1,20 +1,28 @@
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/BallanceMod.cmake")
 
-set(BML_GAMEPLAY_MODS
-        BallSticky
-        BMLModuls
-        DeformedWB
-        DualBallControl
-        DynamicFov
-        MapScripts
-        NewSpawn
-        SpiritTrail)
+if(APPLE)
+    # Native Mods share libc++ and the arm64 ABI with the native loader. Keep
+    # this inventory explicit until each legacy Win32 Mod has been ported.
+    set(BML_GAMEPLAY_MODS)
+    set(BML_TOOLING_MODS SpeedrunShortcuts)
+else()
+    set(BML_GAMEPLAY_MODS
+            BallSticky
+            BMLModuls
+            DeformedWB
+            DualBallControl
+            DynamicFov
+            MapScripts
+            NewSpawn
+            SpiritTrail)
 
-set(BML_TOOLING_MODS
-        CameraUtilities
-        DebugUtilities
-        Segment
-        TravelMode)
+    set(BML_TOOLING_MODS
+            CameraUtilities
+            DebugUtilities
+            Segment
+            SpeedrunShortcuts
+            TravelMode)
+endif()
 
 set(BML_MOD_PACKAGES)
 foreach(mod IN LISTS BML_GAMEPLAY_MODS)
@@ -26,8 +34,10 @@ foreach(mod IN LISTS BML_TOOLING_MODS)
     list(APPEND BML_MOD_PACKAGES "${package_name}")
 endforeach()
 
-ballance_add_mod_directory(IVP Providers package_name)
-list(APPEND BML_MOD_PACKAGES "${package_name}")
+if(NOT APPLE)
+    ballance_add_mod_directory(IVP Providers package_name)
+    list(APPEND BML_MOD_PACKAGES "${package_name}")
+endif()
 
 list(SORT BML_MOD_PACKAGES)
 string(REPLACE ";" "\n" BML_MOD_PACKAGE_LIST "${BML_MOD_PACKAGES}")
