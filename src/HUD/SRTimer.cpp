@@ -23,6 +23,12 @@ void SRTimer::Update(float deltaTimeMs) {
     }
 }
 
+void SRTimer::SetState(float elapsedTimeMs, bool running) {
+    m_Time = elapsedTimeMs >= 0.0f ? static_cast<double>(elapsedTimeMs) : 0.0;
+    m_Running = running;
+    m_Dirty = true;
+}
+
 float SRTimer::GetTime() const {
     return (float)m_Time;
 }

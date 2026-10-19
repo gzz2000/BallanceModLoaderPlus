@@ -371,7 +371,9 @@ public:
     void StartSRTimer();
     void PauseSRTimer();
     void ResetSRTimer();
+    void SetSRTimerState(float elapsedTimeMs, bool running);
     float GetSRTime();
+    bool IsSRTimerRunning();
 
     void SkipRenderForNextTick() override;
 

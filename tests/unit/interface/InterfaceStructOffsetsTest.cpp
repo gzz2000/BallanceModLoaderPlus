@@ -339,6 +339,8 @@ TEST(InterfaceStructOffsets, SpeedrunInterface) {
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, StartTimer, 20);
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, PauseTimer, 24);
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ResetTimer, 28);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerRunning, 32);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, WriteTimerState, 36);
     ExpectGrowthRules<BML_SpeedrunInterface>("bml.speedrun", 32, 0, BML_SPEEDRUN_INTERFACE_MINOR);
 }
 

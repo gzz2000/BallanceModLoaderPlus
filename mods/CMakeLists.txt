@@ -4,7 +4,7 @@ if(APPLE)
     # Native Mods share libc++ and the arm64 ABI with the native loader. Keep
     # this inventory explicit until each legacy Win32 Mod has been ported.
     set(BML_GAMEPLAY_MODS)
-    set(BML_TOOLING_MODS SpeedrunShortcuts)
+    set(BML_TOOLING_MODS PracticeTools SpeedrunShortcuts)
 else()
     set(BML_GAMEPLAY_MODS
             BallSticky

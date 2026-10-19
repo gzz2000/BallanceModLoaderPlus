@@ -25,7 +25,7 @@ BML_BEGIN_CDECLS
 
 #define BML_SPEEDRUN_INTERFACE_ID "bml.speedrun"
 #define BML_SPEEDRUN_INTERFACE_MAJOR 1
-#define BML_SPEEDRUN_INTERFACE_MINOR 0
+#define BML_SPEEDRUN_INTERFACE_MINOR 1
 
 // ElapsedTime is in milliseconds, and matches IBML::GetSRScore.
 // This is a C struct and has no default member
@@ -57,6 +57,14 @@ typedef struct BML_SpeedrunInterface {
 
     // Zeroes the elapsed time and leaves the timer stopped.
     int (BML_CDECL *ResetTimer)(void);
+
+    // Reads whether the timer is advancing. Added in interface 1.1.
+    int (BML_CDECL *ReadTimerRunning)(int *out);
+
+    // Restores both elapsed milliseconds and whether the timer is advancing.
+    // Added in interface 1.1. The original TimerState remains unchanged so
+    // Mods compiled against 1.0 keep their four-byte output buffer.
+    int (BML_CDECL *WriteTimerState)(float elapsedTime, int running);
 } BML_SpeedrunInterface;
 
 #pragma pack(pop)
@@ -121,6 +129,24 @@ inline const BML_SpeedrunInterface *Interface() {
     if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, ResetTimer))
         return BML_ERROR_NOT_FOUND;
     return speedrun->ResetTimer();
+}
+
+[[nodiscard]] inline int ReadTimerRunning(bool &running) {
+    const BML_SpeedrunInterface *speedrun = Detail::Interface();
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, ReadTimerRunning))
+        return BML_ERROR_NOT_FOUND;
+    int value = 0;
+    const int status = speedrun->ReadTimerRunning(&value);
+    if (status == BML_OK)
+        running = value != 0;
+    return status;
+}
+
+[[nodiscard]] inline int WriteTimerState(float elapsedTime, bool running) {
+    const BML_SpeedrunInterface *speedrun = Detail::Interface();
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, WriteTimerState))
+        return BML_ERROR_NOT_FOUND;
+    return speedrun->WriteTimerState(elapsedTime, running ? 1 : 0);
 }
 
 } // namespace BML::Speedrun

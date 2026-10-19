@@ -224,8 +224,20 @@ void HUDRuntime::ResetSRTimer() {
     m_SRTimer.Reset();
 }
 
+void HUDRuntime::SetSRTimerState(float elapsedTimeMs, bool running) {
+    m_SRTimer.SetState(elapsedTimeMs, running);
+    if (auto container = HUDCast<HUDContainer>(m_SRElement)) {
+        if (container->IsFadeEnabled())
+            container->SetFadeTarget(running ? 1.0f : 0.5f);
+    }
+}
+
 float HUDRuntime::GetSRTime() const {
     return m_SRTimer.GetTime();
+}
+
+bool HUDRuntime::IsSRTimerRunning() const {
+    return m_SRTimer.IsRunning();
 }
 
 void HUDRuntime::SetFPSUpdateFrequency(uint32_t frames) {

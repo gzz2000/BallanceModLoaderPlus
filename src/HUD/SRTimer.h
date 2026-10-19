@@ -13,6 +13,7 @@ public:
     void Pause();
 
     void Update(float deltaTime);
+    void SetState(float elapsedTimeMs, bool running);
 
     float GetTime() const;
     const char *GetFormattedTime() const;

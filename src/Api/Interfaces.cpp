@@ -13,6 +13,7 @@
 #include "BML/Speedrun.h"
 #include "BML/UI.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -104,6 +105,24 @@ int BML_CDECL SpeedrunReadTimerState(BML_SpeedrunTimerState *out) {
         return BML_ERROR_INVALID_PARAMETER;
     return ServeOnMainThread([out](ModContext &context) {
         out->ElapsedTime = context.GetSRTime();
+        return BML_OK;
+    });
+}
+
+int BML_CDECL SpeedrunReadTimerRunning(int *out) {
+    if (!out)
+        return BML_ERROR_INVALID_PARAMETER;
+    return ServeOnMainThread([out](ModContext &context) {
+        *out = context.IsSRTimerRunning() ? 1 : 0;
+        return BML_OK;
+    });
+}
+
+int BML_CDECL SpeedrunWriteTimerState(float elapsedTime, int running) {
+    if (!std::isfinite(elapsedTime) || elapsedTime < 0.0f)
+        return BML_ERROR_INVALID_PARAMETER;
+    return ServeOnMainThread([elapsedTime, running](ModContext &context) {
+        context.SetSRTimerState(elapsedTime, running != 0);
         return BML_OK;
     });
 }
@@ -386,6 +405,8 @@ const BML_SpeedrunInterface kSpeedrunInterface = {
     &SpeedrunStartTimer,
     &SpeedrunPauseTimer,
     &SpeedrunResetTimer,
+    &SpeedrunReadTimerRunning,
+    &SpeedrunWriteTimerState,
 };
 
 const BML_GameplayInterface kGameplayInterface = {

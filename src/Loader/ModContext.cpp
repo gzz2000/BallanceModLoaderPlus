@@ -1417,8 +1417,17 @@ void ModContext::ResetSRTimer() {
         m_Loader.GetBuiltinMod()->ResetSRTimer();
 }
 
+void ModContext::SetSRTimerState(float elapsedTimeMs, bool running) {
+    if (m_Loader.GetBuiltinMod())
+        m_Loader.GetBuiltinMod()->SetSRTimerState(elapsedTimeMs, running);
+}
+
 float ModContext::GetSRTime() {
     return m_Loader.GetBuiltinMod() ? m_Loader.GetBuiltinMod()->GetSRTime() : 0.0f;
+}
+
+bool ModContext::IsSRTimerRunning() {
+    return m_Loader.GetBuiltinMod() && m_Loader.GetBuiltinMod()->IsSRTimerRunning();
 }
 
 void ModContext::SkipRenderForNextTick() {

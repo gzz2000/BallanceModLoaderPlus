@@ -698,6 +698,14 @@ void BMLMod::ResetSRTimer() {
     m_HUD.ResetSRTimer();
 }
 
+void BMLMod::SetSRTimerState(float elapsedTimeMs, bool running) {
+    m_HUD.SetSRTimerState(elapsedTimeMs, running);
+}
+
 float BMLMod::GetSRTime() const {
     return m_HUD.GetSRTime();
+}
+
+bool BMLMod::IsSRTimerRunning() const {
+    return m_HUD.IsSRTimerRunning();
 }

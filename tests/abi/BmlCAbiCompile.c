@@ -260,7 +260,16 @@ int BML_TestCAbiSpeedrunInterface(void) {
         return 0;
     if (speedrun->ReadTimerState(&state) != BML_OK)
         return 0;
-    return state.ElapsedTime >= 0.0f;
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, ReadTimerRunning))
+        return 0;
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, WriteTimerState))
+        return 0;
+    {
+        int running = 0;
+        return state.ElapsedTime >= 0.0f &&
+               speedrun->ReadTimerRunning(&running) == BML_OK &&
+               speedrun->WriteTimerState(state.ElapsedTime, running) == BML_OK;
+    }
 }
 
 static int BML_CDECL BML_TestCAbiExecuteCommand(

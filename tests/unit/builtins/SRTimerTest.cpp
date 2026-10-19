@@ -44,6 +44,21 @@ TEST_F(SRTimerTest, ResetClearsTime) {
     EXPECT_FALSE(timer.IsRunning());
 }
 
+TEST_F(SRTimerTest, RestoreStateSetsTimeAndRunningState) {
+    timer.SetState(1234.5f, true);
+    EXPECT_FLOAT_EQ(1234.5f, timer.GetTime());
+    EXPECT_TRUE(timer.IsRunning());
+    EXPECT_TRUE(timer.IsDirty());
+
+    timer.Update(5.5f);
+    EXPECT_FLOAT_EQ(1240.0f, timer.GetTime());
+
+    timer.SetState(700.0f, false);
+    timer.Update(100.0f);
+    EXPECT_FLOAT_EQ(700.0f, timer.GetTime());
+    EXPECT_FALSE(timer.IsRunning());
+}
+
 TEST_F(SRTimerTest, FormattedTimeBasic) {
     timer.Start();
     // 1h 23m 45s 678ms = 5025678ms
