@@ -20,7 +20,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.1"; }
+    const char *GetVersion() override { return "0.1.4"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -46,6 +46,7 @@ private:
         CK_ARRAYTYPE type = CKARRAYTYPE_INT;
         CKDWORD scalar = 0;
         std::string string;
+        CKParameterOut *parameter = nullptr;
     };
 
     struct ArrayState {
@@ -57,18 +58,103 @@ private:
 
     struct EntityState {
         CK_ID id = 0;
-        VxMatrix world;
+        VxMatrix local;
         bool visible = false;
     };
 
+    struct Entity2dState {
+        CK_ID id = 0;
+        VxRect rect;
+        VxRect sourceRect;
+        CKDWORD flags = 0;
+        int zOrder = 0;
+        int spriteSlot = -1;
+        bool homogeneous = false;
+        bool visible = false;
+    };
+
+    struct BehaviorState {
+        CK_ID id = 0;
+        CKDWORD runtimeFlags = 0;
+        std::vector<CK_ID> delayedLinks;
+    };
+
+    struct BehaviorIoState {
+        CK_ID id = 0;
+        CKDWORD flags = 0;
+    };
+
+    struct BehaviorLinkState {
+        CK_ID id = 0;
+        int activationDelay = 0;
+        CKDWORD runtimeFlags = 0;
+    };
+
+    struct ObjectAnimationState {
+        CK_ID id = 0;
+        float step = 0.0f;
+    };
+
+    struct AnimationState {
+        CK_ID id = 0;
+        float step = 0.0f;
+    };
+
+    struct StateObjectState {
+        CK_ID id = 0;
+        bool active = false;
+    };
+
+    struct SynchroState {
+        CK_ID id = 0;
+        int waiters = 0;
+        std::vector<CK_ID> arrived;
+        std::vector<CK_ID> passed;
+    };
+
+    struct CriticalSectionState {
+        CK_ID id = 0;
+        CK_ID owner = 0;
+    };
+
+    struct MessageWaitState {
+        CKMessageType type = -1;
+        CK_ID behavior = 0;
+        CK_ID output = 0;
+        CK_ID object = 0;
+    };
+
+    struct SceneObjectState {
+        CK_ID id = 0;
+        bool active = false;
+    };
+
     struct Snapshot {
+        std::vector<CK_ID> objectIds;
         std::vector<ObjectState> parameters;
         std::vector<ArrayState> arrays;
         std::vector<EntityState> entities;
+        std::vector<Entity2dState> entities2d;
+        std::vector<BehaviorState> behaviors;
+        std::vector<BehaviorIoState> behaviorIos;
+        std::vector<BehaviorLinkState> behaviorLinks;
+        std::vector<ObjectAnimationState> objectAnimations;
+        std::vector<AnimationState> animations;
+        std::vector<SceneObjectState> sceneObjects;
+        std::vector<StateObjectState> stateObjects;
+        std::vector<SynchroState> synchros;
+        std::vector<CriticalSectionState> criticalSections;
+        std::vector<MessageWaitState> messageWaits;
         TT_PhysicsSnapshotHandle physics = nullptr;
         float timerElapsed = 0.0f;
         bool timerRunning = false;
         bool timerCaptured = false;
+        int energyPoints = 0;
+        int levelPoints = 0;
+        bool scoreCaptured = false;
+        float absoluteTime = 0.0f;
+        CKDWORD mainTick = 0;
+        bool clockCaptured = false;
     };
 
     void RefreshSettings();
