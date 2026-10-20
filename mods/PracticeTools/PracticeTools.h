@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,12 @@ using TT_PhysicsSnapshotHandle = void *;
 extern "C" int TT_PhysicsCaptureSnapshot(CKContext *, TT_PhysicsSnapshotHandle *);
 extern "C" int TT_PhysicsRestoreSnapshot(CKContext *, TT_PhysicsSnapshotHandle);
 extern "C" void TT_PhysicsDestroySnapshot(TT_PhysicsSnapshotHandle);
+#if defined(__APPLE__)
+extern "C" int TT_TimeCaptureRuntimeState(
+    CKContext *, std::uint64_t *, double *, CKBOOL *);
+extern "C" int TT_TimeRestoreRuntimeState(
+    CKContext *, std::uint64_t, double, CKBOOL);
+#endif
 
 class PracticeTools final : public IMod {
 public:
@@ -20,7 +27,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.6"; }
+    const char *GetVersion() override { return "0.1.7"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -161,6 +168,10 @@ private:
         float absoluteTime = 0.0f;
         CKDWORD mainTick = 0;
         bool clockCaptured = false;
+        std::uint64_t toolboxFixedTicks = 0;
+        double toolboxTime = 0.0;
+        CKBOOL toolboxTiming = FALSE;
+        bool toolboxTimeCaptured = false;
     };
 
     void RefreshSettings();

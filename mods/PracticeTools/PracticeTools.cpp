@@ -19,6 +19,23 @@ bool ReadArrayInt(IBML *bml, const char *name, int column, int &value) {
     return array && array->GetRowCount() > 0 && array->GetColumnCount() > column &&
         array->GetElementValue(0, column, &value) != FALSE;
 }
+
+#if defined(__linux__)
+using CaptureToolboxTime = int (*)(CKContext *, std::uint64_t *, double *, CKBOOL *);
+using RestoreToolboxTime = int (*)(CKContext *, std::uint64_t, double, CKBOOL);
+
+CaptureToolboxTime ResolveCaptureToolboxTime() {
+    static auto function = reinterpret_cast<CaptureToolboxTime>(
+        dlsym(RTLD_DEFAULT, "TT_TimeCaptureRuntimeState"));
+    return function;
+}
+
+RestoreToolboxTime ResolveRestoreToolboxTime() {
+    static auto function = reinterpret_cast<RestoreToolboxTime>(
+        dlsym(RTLD_DEFAULT, "TT_TimeRestoreRuntimeState"));
+    return function;
+}
+#endif
 }
 
 IMod *BMLEntry(IBML *bml) {
@@ -61,7 +78,13 @@ void PracticeTools::OnLoad() {
 
 void PracticeTools::OnUnload() {
     EndFullSpeed();
-    ClearState();
+    // CKContext::Reset can unload mods after it has already destroyed scene
+    // objects. Snapshot value clones are registered CK objects and are owned
+    // by that context too; dereferencing their cached pointers here can hit an
+    // object whose ID/storage has already been recycled. Normal level changes
+    // still call ClearState while the context is live. At final shutdown just
+    // discard our non-owning bookkeeping and let CKContext finish teardown.
+    m_Snapshot.reset();
 }
 
 void PracticeTools::OnModifyConfig(const char *, const char *, IProperty *) {
@@ -402,6 +425,17 @@ void PracticeTools::SaveState() {
         snapshot->mainTick = m_Time->GetMainTickCount();
         snapshot->clockCaptured = true;
     }
+#if defined(__APPLE__)
+    snapshot->toolboxTimeCaptured = TT_TimeCaptureRuntimeState(
+        m_Context, &snapshot->toolboxFixedTicks, &snapshot->toolboxTime,
+        &snapshot->toolboxTiming) == CK_OK;
+#elif defined(__linux__)
+    if (CaptureToolboxTime capture = ResolveCaptureToolboxTime()) {
+        snapshot->toolboxTimeCaptured = capture(
+            m_Context, &snapshot->toolboxFixedTicks, &snapshot->toolboxTime,
+            &snapshot->toolboxTiming) == CK_OK;
+    }
+#endif
 
     DestroySnapshot(previous.get());
     m_Snapshot = std::move(snapshot);
@@ -640,6 +674,18 @@ void PracticeTools::RestoreState() {
     }
     if (m_Snapshot->clockCaptured)
         m_Time->RestoreRuntimeClock(m_Snapshot->absoluteTime, m_Snapshot->mainTick);
+#if defined(__APPLE__)
+    if (m_Snapshot->toolboxTimeCaptured)
+        TT_TimeRestoreRuntimeState(m_Context, m_Snapshot->toolboxFixedTicks,
+                                   m_Snapshot->toolboxTime,
+                                   m_Snapshot->toolboxTiming);
+#elif defined(__linux__)
+    if (m_Snapshot->toolboxTimeCaptured) {
+        if (RestoreToolboxTime restore = ResolveRestoreToolboxTime())
+            restore(m_Context, m_Snapshot->toolboxFixedTicks,
+                    m_Snapshot->toolboxTime, m_Snapshot->toolboxTiming);
+    }
+#endif
     // Do not carry a key-down bit across a checkpoint or rewind boundary.
     // Ballance's force controller consumes this 256-byte Virtools keyboard
     // state directly; a missed key-up event otherwise applies directional
