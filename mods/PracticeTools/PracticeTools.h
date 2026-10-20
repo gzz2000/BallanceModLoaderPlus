@@ -20,7 +20,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.5"; }
+    const char *GetVersion() override { return "0.1.6"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }

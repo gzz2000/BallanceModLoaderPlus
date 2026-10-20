@@ -4,6 +4,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <dlfcn.h>
+#endif
+
 namespace {
 constexpr CKDWORD kBehaviorRuntimeFlags =
     CKBEHAVIOR_ACTIVE | CKBEHAVIOR_WAITSFORMESSAGE |
@@ -401,6 +405,11 @@ void PracticeTools::SaveState() {
 
     DestroySnapshot(previous.get());
     m_Snapshot = std::move(snapshot);
+    // Capturing is synchronous and can take substantially longer than one
+    // fixed tick.  Do not let Player repay that wall-clock pause by running a
+    // burst of score/physics ticks after this callback returns.
+    if (m_Time)
+        m_Time->ResetRuntimeSchedule();
     const auto captureMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - captureStarted).count();
     GetLogger()->Info("Captured practice state: %zu parameters, %zu arrays, %zu 3D/%zu 2D entities, "
@@ -723,8 +732,18 @@ void PracticeTools::ClearMovementInput() {
     unsigned char *keyboard = m_Input->GetKeyboardState();
     if (!keyboard)
         return;
-    keyboard[CKKEY_UP] = 0;
-    keyboard[CKKEY_DOWN] = 0;
-    keyboard[CKKEY_LEFT] = 0;
-    keyboard[CKKEY_RIGHT] = 0;
+    const CKDWORD keys[] = {CKKEY_UP, CKKEY_DOWN, CKKEY_LEFT, CKKEY_RIGHT};
+#if defined(__APPLE__) || defined(__linux__)
+    using QueueReleases = void (*)(CKInputManager *, const CKDWORD *, int);
+    static QueueReleases queueReleases = reinterpret_cast<QueueReleases>(
+        dlsym(RTLD_DEFAULT, "SdlInputManagerQueueKeyReleases"));
+    if (queueReleases) {
+        queueReleases(m_Input, keys, 4);
+        return;
+    }
+#endif
+    // A transition to idle is invisible to edge-driven controller graphs.
+    // Keep this fallback for non-SDL input managers.
+    for (CKDWORD key : keys)
+        keyboard[key] = KS_RELEASED;
 }
