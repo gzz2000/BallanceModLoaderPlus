@@ -20,6 +20,26 @@ bool ReadArrayInt(IBML *bml, const char *name, int column, int &value) {
         array->GetElementValue(0, column, &value) != FALSE;
 }
 
+bool IsOpaquePhysicsRuntimeParameter(CKParameter *parameter) {
+    if (!parameter || !CKIsChildClassOf(parameter, CKCID_PARAMETERLOCAL))
+        return false;
+    CKBehavior *owner = CKBehavior::Cast(parameter->GetOwner());
+    if (!owner)
+        return false;
+    const CKGUID guid = owner->GetPrototypeGuid();
+    // These building blocks keep C++ pointers/handles in local parameters.
+    // CopyValue would only clone the address; after the pointed-to physics
+    // object is rebuilt, restoring it creates a dangling pointer and a later
+    // behavior reset double-frees the old allocation.
+    return guid == CKGUID(0x5e624f0a, 0x35160450) || // Ball Joint
+           guid == CKGUID(0x7435488d, 0x201d1188) || // Collision Detection
+           guid == CKGUID(0x56e20c57, 0x0b926068) || // Physics Force
+           guid == CKGUID(0x41cd3653, 0x0de60c1d) || // Hinge
+           guid == CKGUID(0x2973360e, 0x23d31aa7) || // Slider
+           guid == CKGUID(0x24a06a3a, 0x07100fce) || // Spring
+           guid == CKGUID(0x199e4cf1, 0x545a78fe);   // Continuous Contact
+}
+
 #if defined(__linux__)
 using CaptureToolboxTime = int (*)(CKContext *, std::uint64_t *, double *, CKBOOL *);
 using RestoreToolboxTime = int (*)(CKContext *, std::uint64_t, double, CKBOOL);
@@ -131,6 +151,7 @@ void PracticeTools::OnProcess() {
         RestoreState();
     m_SaveDown = saveDown;
     m_RestoreDown = restoreDown;
+
 }
 
 void PracticeTools::BeginFullSpeed() {
@@ -199,6 +220,8 @@ void PracticeTools::SaveState() {
             privateParameters.find(object) != privateParameters.end())
             continue;
 
+        snapshot->identities[object->GetID()] = object;
+
         const CK_CLASSID cid = object->GetClassID();
         if (CKIsChildClassOf(cid, CKCID_BEHAVIOR)) {
             auto *behavior = static_cast<CKBehavior *>(object);
@@ -213,7 +236,8 @@ void PracticeTools::SaveState() {
             snapshot->behaviors.push_back(std::move(state));
         } else if (CKIsChildClassOf(cid, CKCID_BEHAVIORIO)) {
             auto *io = static_cast<CKBehaviorIO *>(object);
-            snapshot->behaviorIos.push_back({object->GetID(), io->GetOldFlags()});
+            snapshot->behaviorIos.push_back(
+                {object->GetID(), io->GetOldFlags(), io->IsActive() != FALSE});
         } else if (CKIsChildClassOf(cid, CKCID_BEHAVIORLINK)) {
             auto *link = static_cast<CKBehaviorLink *>(object);
             snapshot->behaviorLinks.push_back(
@@ -257,9 +281,9 @@ void PracticeTools::SaveState() {
 
         if (scene && CKIsChildClassOf(cid, CKCID_SCENEOBJECT)) {
             auto *sceneObject = static_cast<CKSceneObject *>(object);
-            if (scene->GetSceneObjectDesc(sceneObject))
-                snapshot->sceneObjects.push_back(
-                    {object->GetID(), scene->IsObjectActive(sceneObject) != FALSE});
+            CKSceneObjectDesc *desc = scene->GetSceneObjectDesc(sceneObject);
+            snapshot->sceneObjects.push_back(
+                {object->GetID(), desc ? desc->m_Flags : 0, desc != nullptr});
         }
 
         if (CKIsChildClassOf(cid, CKCID_GROUP)) {
@@ -276,6 +300,8 @@ void PracticeTools::SaveState() {
         if (CKIsChildClassOf(cid, CKCID_PARAMETEROUT) ||
             CKIsChildClassOf(cid, CKCID_PARAMETERLOCAL)) {
             auto *parameter = static_cast<CKParameter *>(object);
+            if (IsOpaquePhysicsRuntimeParameter(parameter))
+                continue;
             // Array-owned cells are captured below using their stable
             // row/column identity. Capturing them here too doubles both the
             // memory and CopyValue work and was the reason the original code
@@ -373,12 +399,16 @@ void PracticeTools::SaveState() {
 
         if (CKIsChildClassOf(cid, CKCID_3DENTITY)) {
             auto *entity = static_cast<CK3dEntity *>(object);
+            CK3dEntity *parent = entity->GetParent();
             snapshot->entities.push_back(
-                {object->GetID(), entity->GetLocalMatrix(), entity->IsVisible() != FALSE});
+                {object->GetID(), parent ? parent->GetID() : 0,
+                 entity->GetLocalMatrix(), entity->IsVisible() != FALSE});
         } else if (CKIsChildClassOf(cid, CKCID_2DENTITY)) {
             auto *entity = static_cast<CK2dEntity *>(object);
             Entity2dState state;
             state.id = object->GetID();
+            CK2dEntity *parent = entity->GetParent();
+            state.parent = parent ? parent->GetID() : 0;
             state.flags = entity->GetFlags();
             state.zOrder = entity->GetZOrder();
             state.visible = entity->IsVisible() != FALSE;
@@ -480,6 +510,16 @@ void PracticeTools::RestoreState() {
         m_Context->GetObjectListByType(CKCID_OBJECT, TRUE);
     std::unordered_set<CKObject *> restoreLiveObjects(
         restoreObjects.Begin(), restoreObjects.End());
+    std::unordered_set<CK_ID> staleObjectIds;
+    const auto resolve = [this, &staleObjectIds](CK_ID id) -> CKObject * {
+        CKObject *object = m_Context->GetObject(id);
+        auto identity = m_Snapshot->identities.find(id);
+        if (identity != m_Snapshot->identities.end() && identity->second == object)
+            return object;
+        if (id)
+            staleObjectIds.insert(id);
+        return nullptr;
+    };
 
     // Restore values without loading whole CKStateChunks. Whole-object loads
     // rewrite behavior/parameter wiring, and CKDataArray::Load destroys owned
@@ -487,7 +527,7 @@ void PracticeTools::RestoreState() {
     // rewind and were responsible for lost controls and the second-restore
     // crash.
     for (const ArrayState &state : m_Snapshot->arrays) {
-        auto *array = CKDataArray::Cast(m_Context->GetObject(state.id));
+        auto *array = CKDataArray::Cast(resolve(state.id));
         if (!array || array->GetRowCount() != state.rows ||
             array->GetColumnCount() != state.columns) {
             GetLogger()->Warn("Skipped changed data array %u during restore.", state.id);
@@ -516,7 +556,7 @@ void PracticeTools::RestoreState() {
     }
 
     for (const ObjectState &state : m_Snapshot->parameters) {
-        auto *parameter = CKParameter::Cast(m_Context->GetObject(state.id));
+        auto *parameter = CKParameter::Cast(resolve(state.id));
         if (parameter && state.value && parameter->GetGUID() == state.value->GetGUID())
             parameter->CopyValue(state.value, FALSE);
     }
@@ -524,8 +564,27 @@ void PracticeTools::RestoreState() {
     int scoreAfterValues = 0;
     ReadArrayInt(m_BML, "Energy", 0, scoreAfterValues);
 
+    // Scripts reparent the camera rig, checkpoint markers and collectible
+    // effects. A saved local matrix only has meaning relative to its saved
+    // parent. Detach first to avoid transient cycles, rebuild the hierarchy,
+    // then restore matrices.
+    size_t changed3dParents = 0;
     for (const EntityState &state : m_Snapshot->entities) {
-        auto *entity = CK3dEntity::Cast(m_Context->GetObject(state.id));
+        auto *entity = CK3dEntity::Cast(resolve(state.id));
+        auto *parent = CK3dEntity::Cast(state.parent ? resolve(state.parent) : nullptr);
+        if (entity && entity->GetParent() != parent) {
+            entity->SetParent(nullptr, TRUE);
+            ++changed3dParents;
+        }
+    }
+    for (const EntityState &state : m_Snapshot->entities) {
+        auto *entity = CK3dEntity::Cast(resolve(state.id));
+        auto *parent = CK3dEntity::Cast(state.parent ? resolve(state.parent) : nullptr);
+        if (entity && entity->GetParent() != parent)
+            entity->SetParent(parent, TRUE);
+    }
+    for (const EntityState &state : m_Snapshot->entities) {
+        auto *entity = CK3dEntity::Cast(resolve(state.id));
         if (!entity)
             continue;
         // Restore the transform relative to its parent. Restoring world
@@ -539,8 +598,23 @@ void PracticeTools::RestoreState() {
     // 2D HUD elements have their own hierarchy and animation state. Keep
     // children fixed while restoring each saved rect so parent updates cannot
     // accumulate offsets over repeated restores.
+    size_t changed2dParents = 0;
     for (const Entity2dState &state : m_Snapshot->entities2d) {
-        auto *entity = CK2dEntity::Cast(m_Context->GetObject(state.id));
+        auto *entity = CK2dEntity::Cast(resolve(state.id));
+        auto *parent = CK2dEntity::Cast(state.parent ? resolve(state.parent) : nullptr);
+        if (entity && entity->GetParent() != parent) {
+            entity->SetParent(nullptr);
+            ++changed2dParents;
+        }
+    }
+    for (const Entity2dState &state : m_Snapshot->entities2d) {
+        auto *entity = CK2dEntity::Cast(resolve(state.id));
+        auto *parent = CK2dEntity::Cast(state.parent ? resolve(state.parent) : nullptr);
+        if (entity && entity->GetParent() != parent)
+            entity->SetParent(parent);
+    }
+    for (const Entity2dState &state : m_Snapshot->entities2d) {
+        auto *entity = CK2dEntity::Cast(resolve(state.id));
         if (!entity)
             continue;
         entity->SetFlags(state.flags);
@@ -560,18 +634,18 @@ void PracticeTools::RestoreState() {
     // pose belonging to the saved phase; the restored behavior graph then
     // continues advancing it on the next simulation tick.
     for (const ObjectAnimationState &state : m_Snapshot->objectAnimations) {
-        auto *animation = CKObjectAnimation::Cast(m_Context->GetObject(state.id));
+        auto *animation = CKObjectAnimation::Cast(resolve(state.id));
         if (animation)
             animation->SetStep(state.step, nullptr);
     }
     for (const AnimationState &state : m_Snapshot->animations) {
-        auto *animation = CKAnimation::Cast(m_Context->GetObject(state.id));
+        auto *animation = CKAnimation::Cast(resolve(state.id));
         if (animation)
             animation->SetStep(state.step);
     }
 
     for (const StateObjectState &state : m_Snapshot->stateObjects) {
-        auto *object = CKStateObject::Cast(m_Context->GetObject(state.id));
+        auto *object = CKStateObject::Cast(resolve(state.id));
         if (object) {
             if (state.active)
                 object->EnterState();
@@ -580,14 +654,14 @@ void PracticeTools::RestoreState() {
         }
     }
     for (const SynchroState &state : m_Snapshot->synchros) {
-        auto *object = CKSynchroObject::Cast(m_Context->GetObject(state.id));
+        auto *object = CKSynchroObject::Cast(resolve(state.id));
         if (object)
             object->RestoreRendezVousState(
                 state.waiters, state.arrived.data(), static_cast<int>(state.arrived.size()),
                 state.passed.data(), static_cast<int>(state.passed.size()));
     }
     for (const CriticalSectionState &state : m_Snapshot->criticalSections) {
-        auto *object = CKCriticalSectionObject::Cast(m_Context->GetObject(state.id));
+        auto *object = CKCriticalSectionObject::Cast(resolve(state.id));
         if (object)
             object->RestoreObjectInCriticalSection(state.owner);
     }
@@ -597,76 +671,99 @@ void PracticeTools::RestoreState() {
     // restoring it without group membership leaves the renderer and gameplay
     // scripts disagreeing about which score balls still exist.
     for (const GroupState &state : m_Snapshot->groups) {
-        auto *group = CKGroup::Cast(m_Context->GetObject(state.id));
+        auto *group = CKGroup::Cast(resolve(state.id));
         if (!group)
             continue;
         group->Clear();
         for (CK_ID memberId : state.members) {
-            auto *member = CKBeObject::Cast(m_Context->GetObject(memberId));
+            auto *member = CKBeObject::Cast(resolve(memberId));
             if (member)
                 group->AddObject(member);
         }
     }
 
     CKScene *scene = m_Context->GetCurrentScene();
+    size_t addedSceneObjects = 0;
+    size_t removedSceneObjects = 0;
     if (scene) {
+        scene->BeginRemoveSequence(TRUE);
         for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
-            auto *object = CKSceneObject::Cast(m_Context->GetObject(state.id));
-            if (!object || !scene->GetSceneObjectDesc(object))
-                continue;
-            scene->ModifyObjectFlags(object,
-                state.active ? CK_SCENEOBJECT_ACTIVE : 0,
-                state.active ? 0 : CK_SCENEOBJECT_ACTIVE);
+            auto *object = CKSceneObject::Cast(resolve(state.id));
+            if (object && !state.inScene && scene->GetSceneObjectDesc(object)) {
+                scene->RemoveObject(object);
+                ++removedSceneObjects;
+            }
         }
+        scene->BeginRemoveSequence(FALSE);
+        scene->BeginAddSequence(TRUE);
+        for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
+            auto *object = CKSceneObject::Cast(resolve(state.id));
+            if (!object || !state.inScene)
+                continue;
+            if (!scene->GetSceneObjectDesc(object)) {
+                scene->AddObject(object);
+                ++addedSceneObjects;
+            }
+            scene->SetObjectFlags(object,
+                static_cast<CK_SCENEOBJECT_FLAGS>(state.flags));
+        }
+        scene->BeginAddSequence(FALSE);
+    }
+
+    // Reconcile which IVP objects exist before restoring behavior IO. The
+    // physics layer may need to execute Physicalize/Continuous Contact while
+    // rebuilding objects; the scheduler pass below then puts every input and
+    // output back at the exact saved activation phase.
+    if (TT_PhysicsRestoreSnapshot(m_Context, m_Snapshot->physics) != CK_OK) {
+        m_BML->SendIngameMessage("Unable to restore physics state");
+        return;
     }
 
     // Restore the exact behavior scheduler phase without Load(), which would
     // detach and rebuild links and parameters.
     for (const BehaviorState &state : m_Snapshot->behaviors) {
-        auto *behavior = CKBehavior::Cast(m_Context->GetObject(state.id));
+        auto *behavior = CKBehavior::Cast(resolve(state.id));
         if (behavior)
             behavior->ClearDelayedLinks();
     }
     if (CKMessageManager *messages = m_Context->GetMessageManager()) {
         messages->ClearRuntimeWaits();
         for (const MessageWaitState &state : m_Snapshot->messageWaits) {
-            auto *behavior = CKBehavior::Cast(m_Context->GetObject(state.behavior));
-            auto *output = CKBehaviorIO::Cast(m_Context->GetObject(state.output));
-            auto *object = CKBeObject::Cast(m_Context->GetObject(state.object));
+            auto *behavior = CKBehavior::Cast(resolve(state.behavior));
+            auto *output = CKBehaviorIO::Cast(resolve(state.output));
+            auto *object = CKBeObject::Cast(resolve(state.object));
             if (behavior)
                 messages->AddRuntimeWait(state.type, behavior, output, object);
         }
     }
     for (const BehaviorLinkState &state : m_Snapshot->behaviorLinks) {
-        auto *link = CKBehaviorLink::Cast(m_Context->GetObject(state.id));
+        auto *link = CKBehaviorLink::Cast(resolve(state.id));
         if (!link)
             continue;
         link->SetActivationDelay(state.activationDelay);
         link->SetRuntimeFlags(state.runtimeFlags & ~CKBL_OLD_IN_DELAYED_LIST);
     }
     for (const BehaviorIoState &state : m_Snapshot->behaviorIos) {
-        auto *io = CKBehaviorIO::Cast(m_Context->GetObject(state.id));
-        if (io)
+        auto *io = CKBehaviorIO::Cast(resolve(state.id));
+        if (io) {
             io->SetOldFlags(state.flags);
+            io->Activate(state.active ? TRUE : FALSE);
+        }
     }
     for (const BehaviorState &state : m_Snapshot->behaviors) {
-        auto *behavior = CKBehavior::Cast(m_Context->GetObject(state.id));
+        auto *behavior = CKBehavior::Cast(resolve(state.id));
         if (!behavior)
             continue;
         const CKDWORD current = behavior->GetFlags();
         behavior->ModifyFlags(state.runtimeFlags,
                               (current & kBehaviorRuntimeFlags) & ~state.runtimeFlags);
         for (CK_ID linkId : state.delayedLinks) {
-            auto *link = CKBehaviorLink::Cast(m_Context->GetObject(linkId));
+            auto *link = CKBehaviorLink::Cast(resolve(linkId));
             if (link)
                 behavior->AddDelayedLink(link);
         }
     }
 
-    if (TT_PhysicsRestoreSnapshot(m_Context, m_Snapshot->physics) != CK_OK) {
-        m_BML->SendIngameMessage("Unable to restore physics state");
-        return;
-    }
     if (m_Snapshot->timerCaptured &&
         BML::Speedrun::WriteTimerState(m_Snapshot->timerElapsed,
                                        m_Snapshot->timerRunning) != BML_OK) {
@@ -700,6 +797,11 @@ void PracticeTools::RestoreState() {
                       m_Snapshot->objectAnimations.size(), m_Snapshot->animations.size(),
                       m_Snapshot->messageWaits.size(),
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
+    GetLogger()->Info(
+        "Restore topology audit: %zu/%zu parent changes, %zu scene additions, "
+        "%zu scene removals, %zu stale object identities.",
+        changed3dParents, changed2dParents, addedSceneObjects,
+        removedSceneObjects, staleObjectIds.size());
     if (m_Snapshot->scoreCaptured) {
         int scoreAfter = 0;
         int levelAfter = 0;

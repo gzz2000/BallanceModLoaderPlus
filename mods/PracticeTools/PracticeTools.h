@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <BML/BMLAll.h>
@@ -27,7 +28,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.7"; }
+    const char *GetVersion() override { return "0.1.8"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -66,12 +67,14 @@ private:
 
     struct EntityState {
         CK_ID id = 0;
+        CK_ID parent = 0;
         VxMatrix local;
         bool visible = false;
     };
 
     struct Entity2dState {
         CK_ID id = 0;
+        CK_ID parent = 0;
         VxRect rect;
         VxRect sourceRect;
         CKDWORD flags = 0;
@@ -90,6 +93,7 @@ private:
     struct BehaviorIoState {
         CK_ID id = 0;
         CKDWORD flags = 0;
+        bool active = false;
     };
 
     struct BehaviorLinkState {
@@ -134,7 +138,8 @@ private:
 
     struct SceneObjectState {
         CK_ID id = 0;
-        bool active = false;
+        CKDWORD flags = 0;
+        bool inScene = false;
     };
 
     struct GroupState {
@@ -143,6 +148,10 @@ private:
     };
 
     struct Snapshot {
+        // CK_ID slots can be reused after scripts delete transient objects.
+        // Keep the original address as a generation token so a rewind never
+        // applies old state to an unrelated object that inherited its ID.
+        std::unordered_map<CK_ID, CKObject *> identities;
         std::vector<ObjectState> parameters;
         std::vector<ArrayState> arrays;
         std::vector<EntityState> entities;
