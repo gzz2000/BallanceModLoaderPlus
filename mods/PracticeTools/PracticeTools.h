@@ -28,7 +28,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.8"; }
+    const char *GetVersion() override { return "0.1.9"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -190,7 +190,7 @@ private:
     void RestoreState();
     void ClearState();
     void DestroySnapshot(Snapshot *snapshot);
-    void ClearMovementInput();
+    void SynchronizeMovementInput();
 
     CKContext *m_Context = nullptr;
     CKTimeManager *m_Time = nullptr;

@@ -1,10 +1,11 @@
 #include "PracticeTools.h"
 
 #include <chrono>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__linux__)
 #include <dlfcn.h>
 #endif
 
@@ -38,6 +39,14 @@ bool IsOpaquePhysicsRuntimeParameter(CKParameter *parameter) {
            guid == CKGUID(0x2973360e, 0x23d31aa7) || // Slider
            guid == CKGUID(0x24a06a3a, 0x07100fce) || // Spring
            guid == CKGUID(0x199e4cf1, 0x545a78fe);   // Continuous Contact
+}
+
+bool IsCollectibleRoot(CKBeObject *object) {
+    if (!object || object->GetScriptCount() <= 0)
+        return false;
+    const char *name = object->GetName();
+    return name && (std::strstr(name, "P_Extra_Point") == name ||
+                    std::strstr(name, "P_Extra_Life") == name);
 }
 
 #if defined(__linux__)
@@ -685,7 +694,42 @@ void PracticeTools::RestoreState() {
     CKScene *scene = m_Context->GetCurrentScene();
     size_t addedSceneObjects = 0;
     size_t removedSceneObjects = 0;
+    size_t reboundCollectibles = 0;
     if (scene) {
+        // A consumed collectible can leave its visual root in the scene after
+        // its collision/animation script has been detached from the manager
+        // runtime. Scene membership alone then looks correct even though the
+        // ball is a static, non-triggerable shell. Rebind only score/life roots
+        // that existed at the saved instant; the scheduler pass below restores
+        // their exact script phase after manager registration is rebuilt.
+        scene->BeginRemoveSequence(TRUE);
+        for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
+            auto *object = CKBeObject::Cast(resolve(state.id));
+            if (state.inScene && IsCollectibleRoot(object) &&
+                scene->GetSceneObjectDesc(object)) {
+                scene->RemoveObjectFromScene(object, TRUE);
+                ++reboundCollectibles;
+            }
+        }
+        scene->BeginRemoveSequence(FALSE);
+
+        // First restore present behavioral objects together with their owned
+        // scripts. This is what CKLevel/ObjectLoader normally do; a raw
+        // CKScene::AddObject only resurrects a collectible's renderable shell.
+        scene->BeginAddSequence(TRUE);
+        for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
+            auto *object = CKSceneObject::Cast(resolve(state.id));
+            if (object && state.inScene && !scene->GetSceneObjectDesc(object)) {
+                scene->AddObjectToScene(object, TRUE);
+                ++addedSceneObjects;
+            }
+        }
+        scene->BeginAddSequence(FALSE);
+
+        // Dependency expansion can include a script whose saved state says it
+        // was absent. Reconcile every captured scene object explicitly after
+        // expansion so the final membership is exact rather than merely a
+        // dependency closure.
         scene->BeginRemoveSequence(TRUE);
         for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
             auto *object = CKSceneObject::Cast(resolve(state.id));
@@ -695,6 +739,7 @@ void PracticeTools::RestoreState() {
             }
         }
         scene->BeginRemoveSequence(FALSE);
+
         scene->BeginAddSequence(TRUE);
         for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
             auto *object = CKSceneObject::Cast(resolve(state.id));
@@ -734,6 +779,16 @@ void PracticeTools::RestoreState() {
             auto *object = CKBeObject::Cast(resolve(state.object));
             if (behavior)
                 messages->AddRuntimeWait(state.type, behavior, output, object);
+        }
+    }
+
+    size_t sceneMembershipMismatches = 0;
+    if (scene) {
+        for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
+            auto *object = CKSceneObject::Cast(resolve(state.id));
+            if (object &&
+                (scene->GetSceneObjectDesc(object) != nullptr) != state.inScene)
+                ++sceneMembershipMismatches;
         }
     }
     for (const BehaviorLinkState &state : m_Snapshot->behaviorLinks) {
@@ -783,11 +838,10 @@ void PracticeTools::RestoreState() {
                     m_Snapshot->toolboxTime, m_Snapshot->toolboxTiming);
     }
 #endif
-    // Do not carry a key-down bit across a checkpoint or rewind boundary.
-    // Ballance's force controller consumes this 256-byte Virtools keyboard
-    // state directly; a missed key-up event otherwise applies directional
-    // force forever even though the physical key has been released.
-    ClearMovementInput();
+    // Reconcile the controller with the keyboard as it physically exists now.
+    // This clears missed key-up latches without discarding a direction the
+    // player is intentionally holding across the rewind.
+    SynchronizeMovementInput();
     GetLogger()->Info("Restored practice state: %zu parameters, %zu arrays, %zu 3D/%zu 2D entities, "
                       "%zu behaviors, %zu links, %zu object/%zu master animations, %zu message waits%s.",
                       m_Snapshot->parameters.size(), m_Snapshot->arrays.size(),
@@ -799,9 +853,11 @@ void PracticeTools::RestoreState() {
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
     GetLogger()->Info(
         "Restore topology audit: %zu/%zu parent changes, %zu scene additions, "
-        "%zu scene removals, %zu stale object identities.",
+        "%zu scene removals, %zu collectible rebinds, %zu final scene mismatches, "
+        "%zu stale object identities.",
         changed3dParents, changed2dParents, addedSceneObjects,
-        removedSceneObjects, staleObjectIds.size());
+        removedSceneObjects, reboundCollectibles, sceneMembershipMismatches,
+        staleObjectIds.size());
     if (m_Snapshot->scoreCaptured) {
         int scoreAfter = 0;
         int levelAfter = 0;
@@ -867,31 +923,30 @@ void PracticeTools::OnPreNextLevel() {
 }
 
 void PracticeTools::OnBallNavActive() {
-    // Checkpoint respawns and restored launch sequences can reactivate the
-    // controller without delivering the key-up event that occurred while it
-    // was inactive. Clear only movement keys; menu and practice shortcuts are
-    // deliberately left untouched.
-    ClearMovementInput();
+    // Checkpoint respawns, ball transformers and launch sequences can all
+    // reactivate the controller after SDL events occurred while it was
+    // inactive. Reconcile movement keys with their real physical state: held
+    // directions remain held, released directions deliver a release edge.
+    SynchronizeMovementInput();
 }
 
-void PracticeTools::ClearMovementInput() {
+void PracticeTools::SynchronizeMovementInput() {
     if (!m_Input)
         return;
     unsigned char *keyboard = m_Input->GetKeyboardState();
     if (!keyboard)
         return;
     const CKDWORD keys[] = {CKKEY_UP, CKKEY_DOWN, CKKEY_LEFT, CKKEY_RIGHT};
-#if defined(__APPLE__) || defined(__linux__)
-    using QueueReleases = void (*)(CKInputManager *, const CKDWORD *, int);
-    static QueueReleases queueReleases = reinterpret_cast<QueueReleases>(
-        dlsym(RTLD_DEFAULT, "SdlInputManagerQueueKeyReleases"));
-    if (queueReleases) {
-        queueReleases(m_Input, keys, 4);
+    if (m_Input->SynchronizeKeyboardKeys(keys, 4)) {
+        GetLogger()->Info(
+            "Movement input synchronized to physical keyboard: U=%d D=%d L=%d R=%d.",
+            keyboard[CKKEY_UP] == KS_PRESSED,
+            keyboard[CKKEY_DOWN] == KS_PRESSED,
+            keyboard[CKKEY_LEFT] == KS_PRESSED,
+            keyboard[CKKEY_RIGHT] == KS_PRESSED);
         return;
     }
-#endif
-    // A transition to idle is invisible to edge-driven controller graphs.
-    // Keep this fallback for non-SDL input managers.
-    for (CKDWORD key : keys)
-        keyboard[key] = KS_RELEASED;
+    // Other input managers already poll their native device. Without an API
+    // that exposes physical state, preserving their result is safer than
+    // fabricating four releases and losing legitimately held directions.
 }
