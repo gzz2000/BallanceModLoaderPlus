@@ -21,7 +21,7 @@ bool ReadArrayInt(IBML *bml, const char *name, int column, int &value) {
         array->GetElementValue(0, column, &value) != FALSE;
 }
 
-bool IsOpaquePhysicsRuntimeParameter(CKParameter *parameter) {
+bool IsOpaqueRuntimeParameter(CKParameter *parameter) {
     if (!parameter || !CKIsChildClassOf(parameter, CKCID_PARAMETERLOCAL))
         return false;
     CKBehavior *owner = CKBehavior::Cast(parameter->GetOwner());
@@ -32,21 +32,14 @@ bool IsOpaquePhysicsRuntimeParameter(CKParameter *parameter) {
     // CopyValue would only clone the address; after the pointed-to physics
     // object is rebuilt, restoring it creates a dangling pointer and a later
     // behavior reset double-frees the old allocation.
-    return guid == CKGUID(0x5e624f0a, 0x35160450) || // Ball Joint
+    return guid == CKGUID(0x36691920, 0x3b261630) || // TT Sky
+           guid == CKGUID(0x5e624f0a, 0x35160450) || // Ball Joint
            guid == CKGUID(0x7435488d, 0x201d1188) || // Collision Detection
            guid == CKGUID(0x56e20c57, 0x0b926068) || // Physics Force
            guid == CKGUID(0x41cd3653, 0x0de60c1d) || // Hinge
            guid == CKGUID(0x2973360e, 0x23d31aa7) || // Slider
            guid == CKGUID(0x24a06a3a, 0x07100fce) || // Spring
            guid == CKGUID(0x199e4cf1, 0x545a78fe);   // Continuous Contact
-}
-
-bool IsCollectibleRoot(CKBeObject *object) {
-    if (!object || object->GetScriptCount() <= 0)
-        return false;
-    const char *name = object->GetName();
-    return name && (std::strstr(name, "P_Extra_Point") == name ||
-                    std::strstr(name, "P_Extra_Life") == name);
 }
 
 #if defined(__linux__)
@@ -309,7 +302,7 @@ void PracticeTools::SaveState() {
         if (CKIsChildClassOf(cid, CKCID_PARAMETEROUT) ||
             CKIsChildClassOf(cid, CKCID_PARAMETERLOCAL)) {
             auto *parameter = static_cast<CKParameter *>(object);
-            if (IsOpaquePhysicsRuntimeParameter(parameter))
+            if (IsOpaqueRuntimeParameter(parameter))
                 continue;
             // Array-owned cells are captured below using their stable
             // row/column identity. Capturing them here too doubles both the
@@ -428,6 +421,22 @@ void PracticeTools::SaveState() {
             if (CKIsChildClassOf(cid, CKCID_SPRITE))
                 state.spriteSlot = static_cast<CKSprite *>(object)->GetCurrentSlot();
             snapshot->entities2d.push_back(state);
+        }
+    }
+
+    if (CKBehaviorManager *behaviors = m_Context->GetBehaviorManager()) {
+        for (int i = 0; i < behaviors->GetObjectsCount(); ++i) {
+            if (CKBeObject *object = behaviors->GetObject(i))
+                snapshot->activeBehaviorObjects.push_back(object->GetID());
+        }
+        const int pendingCount = behaviors->GetPendingObjectCount();
+        for (int i = 0; i < pendingCount; ++i) {
+            CK_ID id = 0;
+            int operation = 0;
+            if (behaviors->GetPendingObject(i, id, operation)) {
+                snapshot->pendingBehaviorObjects.push_back(id);
+                snapshot->pendingBehaviorOperations.push_back(operation);
+            }
         }
     }
 
@@ -694,25 +703,7 @@ void PracticeTools::RestoreState() {
     CKScene *scene = m_Context->GetCurrentScene();
     size_t addedSceneObjects = 0;
     size_t removedSceneObjects = 0;
-    size_t reboundCollectibles = 0;
     if (scene) {
-        // A consumed collectible can leave its visual root in the scene after
-        // its collision/animation script has been detached from the manager
-        // runtime. Scene membership alone then looks correct even though the
-        // ball is a static, non-triggerable shell. Rebind only score/life roots
-        // that existed at the saved instant; the scheduler pass below restores
-        // their exact script phase after manager registration is rebuilt.
-        scene->BeginRemoveSequence(TRUE);
-        for (const SceneObjectState &state : m_Snapshot->sceneObjects) {
-            auto *object = CKBeObject::Cast(resolve(state.id));
-            if (state.inScene && IsCollectibleRoot(object) &&
-                scene->GetSceneObjectDesc(object)) {
-                scene->RemoveObjectFromScene(object, TRUE);
-                ++reboundCollectibles;
-            }
-        }
-        scene->BeginRemoveSequence(FALSE);
-
         // First restore present behavioral objects together with their owned
         // scripts. This is what CKLevel/ObjectLoader normally do; a raw
         // CKScene::AddObject only resurrects a collectible's renderable shell.
@@ -819,6 +810,23 @@ void PracticeTools::RestoreState() {
         }
     }
 
+    // Scene flags and behavior flags are not sufficient to rewind execution:
+    // collectible scripts remove their owner from CKBehaviorManager when
+    // consumed. Restore the scheduler's active set and deferred mutations as
+    // an atomic state instead of firing scene detach/attach callbacks. The
+    // latter destroys private runtime objects (for example TT Sky's entity)
+    // and made repeated restores both visually incorrect and crash-prone.
+    if (CKBehaviorManager *behaviors = m_Context->GetBehaviorManager()) {
+        const CKERROR result = behaviors->RestoreRuntimeObjects(
+            m_Snapshot->activeBehaviorObjects.data(),
+            static_cast<int>(m_Snapshot->activeBehaviorObjects.size()),
+            m_Snapshot->pendingBehaviorObjects.data(),
+            m_Snapshot->pendingBehaviorOperations.data(),
+            static_cast<int>(m_Snapshot->pendingBehaviorObjects.size()));
+        if (result != CK_OK)
+            GetLogger()->Warn("Could not restore behavior scheduler state (%d).", result);
+    }
+
     if (m_Snapshot->timerCaptured &&
         BML::Speedrun::WriteTimerState(m_Snapshot->timerElapsed,
                                        m_Snapshot->timerRunning) != BML_OK) {
@@ -853,11 +861,12 @@ void PracticeTools::RestoreState() {
                       m_Snapshot->timerCaptured ? " and SR timer" : "");
     GetLogger()->Info(
         "Restore topology audit: %zu/%zu parent changes, %zu scene additions, "
-        "%zu scene removals, %zu collectible rebinds, %zu final scene mismatches, "
-        "%zu stale object identities.",
+        "%zu scene removals, %zu final scene mismatches, %zu stale object identities; "
+        "%zu active/%zu pending behavior objects.",
         changed3dParents, changed2dParents, addedSceneObjects,
-        removedSceneObjects, reboundCollectibles, sceneMembershipMismatches,
-        staleObjectIds.size());
+        removedSceneObjects, sceneMembershipMismatches, staleObjectIds.size(),
+        m_Snapshot->activeBehaviorObjects.size(),
+        m_Snapshot->pendingBehaviorObjects.size());
     if (m_Snapshot->scoreCaptured) {
         int scoreAfter = 0;
         int levelAfter = 0;

@@ -28,7 +28,7 @@ public:
     ~PracticeTools() override;
 
     const char *GetID() override { return "PracticeTools"; }
-    const char *GetVersion() override { return "0.1.9"; }
+    const char *GetVersion() override { return "0.1.10"; }
     const char *GetName() override { return "Practice Tools"; }
     const char *GetAuthor() override { return "gzz2000"; }
     const char *GetDescription() override { return "Hold-to-run-at-264 and in-memory gameplay snapshots."; }
@@ -167,6 +167,9 @@ private:
         std::vector<SynchroState> synchros;
         std::vector<CriticalSectionState> criticalSections;
         std::vector<MessageWaitState> messageWaits;
+        std::vector<CK_ID> activeBehaviorObjects;
+        std::vector<CK_ID> pendingBehaviorObjects;
+        std::vector<int> pendingBehaviorOperations;
         TT_PhysicsSnapshotHandle physics = nullptr;
         float timerElapsed = 0.0f;
         bool timerRunning = false;
