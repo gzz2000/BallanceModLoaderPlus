@@ -19,8 +19,16 @@
 #include <mach-o/dyld.h>
 #endif
 
+#ifdef PRACTICE_BUILD_STATIC
+#include "StaticProviders.h"
+#endif
 namespace {
-#ifdef __APPLE__
+#ifdef PRACTICE_BUILD_STATIC
+void *ResolveEntityTransformSymbol(const char *name) { return PracticeStaticSymbol(name); }
+void *OpenSoundSnapshotProvider() { static char provider; return &provider; }
+void *OpenLegacySegmentProvider() { static char provider; return &provider; }
+#endif
+#if defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
 void *ResolveEntityTransformSymbol(const char *symbol) {
     // CK2_3D is loaded RTLD_LOCAL, so the global namespace is insufficient.
     for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
@@ -43,6 +51,8 @@ void *OpenSoundSnapshotProvider() {
     }
     return nullptr;
 }
+#endif
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
 using CaptureEntity2d = int (*)(CKObject *, CKEntity2dState *, std::size_t);
 using RestoreEntities2d = int (*)(CKContext *, const CKEntity2dRestoreEntry *, std::size_t, std::size_t);
 using CaptureEntityTransform = int (*)(CKObject *, CKEntityTransformState *, std::size_t);
@@ -51,6 +61,8 @@ using CaptureEntityUserBox = int (*)(CKObject *, CKEntityUserBoxState *, std::si
 using RestoreEntityUserBox = int (*)(CKObject *, const CKEntityUserBoxState *, std::size_t);
 using CaptureEntityVisibility = int (*)(CKObject *, CKEntityVisibilityState *, std::size_t);
 using RestoreEntityVisibility = int (*)(CKObject *, const CKEntityVisibilityState *, std::size_t);
+#endif
+#if defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
 void *OpenLegacySegmentProvider() {
     for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
         const char *image = _dyld_get_image_name(i);
@@ -61,8 +73,26 @@ void *OpenLegacySegmentProvider() {
     return nullptr;
 }
 #endif
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
+void *PracticeProviderSymbol(void *provider, const char *name) {
+#ifdef PRACTICE_BUILD_STATIC
+    return provider ? PracticeStaticSymbol(name) : nullptr;
+#else
+    return dlsym(provider, name);
+#endif
+}
+void PracticeCloseProvider(void *provider) {
+#ifndef PRACTICE_BUILD_STATIC
+    dlclose(provider);
+#else
+    (void)provider; // Static providers live for the entire host lifetime.
+#endif
+}
+#endif
 bool TasOwnsKeyboard(CKInputManager *input) {
-#ifdef __APPLE__
+#ifdef PRACTICE_BUILD_STATIC
+    return BML_TASOwnsKeyboard(input) != 0;
+#elif defined(__APPLE__)
     // Mods are loaded locally, so RTLD_DEFAULT need not expose their exports.
     // Resolve on demand: retaining a function pointer across mod unload is unsafe.
     for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
@@ -270,6 +300,9 @@ RestoreToolboxTime ResolveRestoreToolboxTime() {
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+extern "C" int BML_WebRequestCheckpoint(int action);
+#endif
 static PracticeTools *g_PracticeTools = nullptr;
 
 IMod *BMLEntry(IBML *bml) {
@@ -371,10 +404,19 @@ void PracticeTools::OnProcess() {
     else if (!fullSpeedDown && m_FullSpeedActive)
         EndFullSpeed();
 
-    if (inLevel && saveDown && !m_SaveDown)
+    if (inLevel && saveDown && !m_SaveDown) {
+#ifdef __EMSCRIPTEN__
+        BML_WebRequestCheckpoint(1);
+#else
         SaveState();
-    else if (inLevel && restoreDown && !m_RestoreDown)
+#endif
+    } else if (inLevel && restoreDown && !m_RestoreDown) {
+#ifdef __EMSCRIPTEN__
+        BML_WebRequestCheckpoint(2);
+#else
         RestoreState();
+#endif
+    }
     m_SaveDown = saveDown;
     m_RestoreDown = restoreDown;
 
@@ -410,7 +452,7 @@ bool PracticeTools::SaveState() {
     if (!m_Context || !(m_BML->IsPlaying() || m_BML->IsPaused()))
         return false;
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     const auto captureTransform = reinterpret_cast<CaptureEntityTransform>(
         ResolveEntityTransformSymbol("CKCaptureEntityTransformState"));
     const auto capture2d = reinterpret_cast<CaptureEntity2d>(
@@ -499,7 +541,7 @@ bool PracticeTools::SaveState() {
             continue;
 
         snapshot->identities[object->GetID()] = object;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         const auto lifetime = CKGetObjectLifetimeToken(m_Context, object->GetID());
         if (!lifetime) {
             m_BML->SendIngameMessage("Object lifetime identity is unavailable");
@@ -803,7 +845,7 @@ bool PracticeTools::SaveState() {
                     state.meshes.push_back(mesh->GetID());
             }
             state.local = entity->GetLocalMatrix();
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
             // Preserve both local/world transforms and their cache state; a
             // matrix setter alone recomputes parent/animation state on rewind.
             if (!captureTransform(entity, &state.exactTransform, sizeof(state.exactTransform))) {
@@ -825,7 +867,7 @@ bool PracticeTools::SaveState() {
         } else if (CKIsChildClassOf(cid, CKCID_2DENTITY)) {
             auto *entity = static_cast<CK2dEntity *>(object);
             Entity2dState state;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
             if (!capture2d(entity, &state.exactLayout, sizeof(state.exactLayout))) {
                 m_BML->SendIngameMessage("Unable to capture exact 2D layout");
                 return false;
@@ -1168,7 +1210,7 @@ bool PracticeTools::SaveState() {
         m_BML->SendIngameMessage("Unable to capture runtime state");
         return false;
     }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     const auto captureAnimations = reinterpret_cast<int (*)(CKContext *, void **)>(
         ResolveEntityTransformSymbol("CKCaptureAnimationState"));
     snapshot->prepareAnimationRestore = reinterpret_cast<int (*)(CKContext *, void *, void **)>(
@@ -1201,19 +1243,19 @@ bool PracticeTools::SaveState() {
         return false;
     }
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     snapshot->soundLibrary = OpenSoundSnapshotProvider();
     if (snapshot->soundLibrary) {
         auto capture = reinterpret_cast<int (*)(CKContext *, void **)>(
-            dlsym(snapshot->soundLibrary, "SDL_SoundCaptureSnapshot"));
+            PracticeProviderSymbol(snapshot->soundLibrary, "SDL_SoundCaptureSnapshot"));
         snapshot->prepareSound = reinterpret_cast<int (*)(CKContext *, void *, void **)>(
-            dlsym(snapshot->soundLibrary, "SDL_SoundPrepareRestore"));
+            PracticeProviderSymbol(snapshot->soundLibrary, "SDL_SoundPrepareRestore"));
         snapshot->commitSound = reinterpret_cast<int (*)(CKContext *, void *)>(
-            dlsym(snapshot->soundLibrary, "SDL_SoundCommitRestore"));
+            PracticeProviderSymbol(snapshot->soundLibrary, "SDL_SoundCommitRestore"));
         snapshot->destroySoundRestore = reinterpret_cast<void (*)(void *)>(
-            dlsym(snapshot->soundLibrary, "SDL_SoundDestroyRestore"));
+            PracticeProviderSymbol(snapshot->soundLibrary, "SDL_SoundDestroyRestore"));
         snapshot->destroySound = reinterpret_cast<void (*)(void *)>(
-            dlsym(snapshot->soundLibrary, "SDL_SoundDestroySnapshot"));
+            PracticeProviderSymbol(snapshot->soundLibrary, "SDL_SoundDestroySnapshot"));
         if (!capture || !snapshot->prepareSound || !snapshot->commitSound ||
             !snapshot->destroySoundRestore || !snapshot->destroySound ||
             capture(m_Context, &snapshot->sound) != CK_OK) {
@@ -1233,18 +1275,18 @@ bool PracticeTools::SaveState() {
     }
     snapshot->timerElapsed = timer.ElapsedTime;
     snapshot->timerRunning = timer.Running != 0;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // This optional legacy module owns a second, independent split timer.
     // Keep its code loaded for the checkpoint lifetime; the provider validates
     // the live mod instance and level epoch before any world restoration.
     snapshot->segmentLibrary = OpenLegacySegmentProvider();
     if (snapshot->segmentLibrary) {
         const auto capture = reinterpret_cast<int (*)(CKContext *, LegacySegmentCheckpointV1 *)>(
-            dlsym(snapshot->segmentLibrary, "BML_LegacySegmentCapture"));
+            PracticeProviderSymbol(snapshot->segmentLibrary, "BML_LegacySegmentCapture"));
         snapshot->validateSegment = reinterpret_cast<int (*)(CKContext *, const LegacySegmentCheckpointV1 *)>(
-            dlsym(snapshot->segmentLibrary, "BML_LegacySegmentValidate"));
+            PracticeProviderSymbol(snapshot->segmentLibrary, "BML_LegacySegmentValidate"));
         snapshot->restoreSegment = reinterpret_cast<int (*)(CKContext *, const LegacySegmentCheckpointV1 *)>(
-            dlsym(snapshot->segmentLibrary, "BML_LegacySegmentRestore"));
+            PracticeProviderSymbol(snapshot->segmentLibrary, "BML_LegacySegmentRestore"));
         if (!capture || !snapshot->validateSegment || !snapshot->restoreSegment ||
             !capture(m_Context, &snapshot->segment)) {
             m_BML->SendIngameMessage("Unable to capture legacy split timer state");
@@ -1266,7 +1308,7 @@ bool PracticeTools::SaveState() {
         snapshot->mainTick = m_Time->GetMainTickCount();
         snapshot->clockCaptured = true;
     }
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     snapshot->toolboxTimeCaptured = TT_TimeCaptureRuntimeStateV2(
         m_Context, &snapshot->toolboxFixedTicks, &snapshot->toolboxTime,
         &snapshot->toolboxTiming, &snapshot->toolboxRecordedClock) == CK_OK;
@@ -1333,7 +1375,7 @@ bool PracticeTools::RestoreState() {
         return false;
     }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // Validate all ordinary identities before any semantic restorer may touch
     // saved pointers or mutate the world. Array cells and attribute parameters
     // are reconstructed by their owners below. Other destroyed objects still
@@ -1364,7 +1406,7 @@ bool PracticeTools::RestoreState() {
     }
 
     CKBehaviorManager *scheduler = m_Context->GetBehaviorManager();
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (m_Snapshot->segmentLibrary && (!m_Snapshot->validateSegment ||
         !m_Snapshot->validateSegment(m_Context, &m_Snapshot->segment))) {
         m_BML->SendIngameMessage("Saved legacy split timer belongs to an inactive level or mod");
@@ -1380,7 +1422,7 @@ bool PracticeTools::RestoreState() {
         m_BML->SendIngameMessage("Saved particle owners are no longer valid");
         return false;
     }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (!m_Snapshot->renderCallbacks || !m_Snapshot->validateRenderCallbacks ||
         m_Snapshot->validateRenderCallbacks(m_Context, m_Snapshot->renderCallbacks) != CK_OK) {
         m_BML->SendIngameMessage("Saved renderer callback owners are no longer valid");
@@ -1388,7 +1430,7 @@ bool PracticeTools::RestoreState() {
     }
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     void *preparedAnimations = nullptr;
     if (!m_Snapshot->animationState || !m_Snapshot->prepareAnimationRestore ||
         m_Snapshot->prepareAnimationRestore(m_Context, m_Snapshot->animationState,
@@ -1429,7 +1471,7 @@ bool PracticeTools::RestoreState() {
         const auto rebuilt = rebuiltParameters.find(id);
         if (rebuilt != rebuiltParameters.end()) return rebuilt->second;
         CKObject *object = m_Context->GetObject(id);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         if (PracticeTimeline::MatchesSavedObject(m_Context, id,
                 m_Snapshot->identities, m_Snapshot->lifetimeTokens)) return object;
 #else
@@ -1509,7 +1551,7 @@ bool PracticeTools::RestoreState() {
             if (TT_SimpleShadowIsRuntimeMaterial(m_Context, material))
                 continue;
         }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         if (PracticeTimeline::MatchesSavedObject(m_Context, object->GetID(),
                 m_Snapshot->identities, m_Snapshot->lifetimeTokens)) continue;
 #else
@@ -2099,12 +2141,12 @@ bool PracticeTools::RestoreState() {
             (parent && currentSiblingIndex != state.siblingIndex))
             ++changed2dParents;
         ordered2dHierarchy.push_back(&state);
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
         if (entity->GetParent())
             entity->SetParent(nullptr);
 #endif
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
     std::stable_sort(ordered2dHierarchy.begin(), ordered2dHierarchy.end(),
         [](const Entity2dState *left, const Entity2dState *right) {
             if (left->parent != right->parent)
@@ -2120,7 +2162,7 @@ bool PracticeTools::RestoreState() {
     }
 #endif
     size_t final2dHierarchyMismatches = 0;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
     for (const Entity2dState &state : m_Snapshot->entities2d) {
         auto *entity = CK2dEntity::Cast(resolve(state.id));
         auto *parent = CK2dEntity::Cast(state.parent ? resolve(state.parent) : nullptr);
@@ -2139,7 +2181,7 @@ bool PracticeTools::RestoreState() {
         auto *entity = CK2dEntity::Cast(resolve(state.id));
         if (!entity)
             continue;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(PRACTICE_BUILD_STATIC)
         entity->SetFlags(state.flags);
         entity->SetMaterial(CKMaterial::Cast(
             state.material ? resolve(state.material) : nullptr));
@@ -2173,7 +2215,7 @@ bool PracticeTools::RestoreState() {
         sprite->SetAlign(state.alignment);
     }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // Restore graph/configuration and cursors without evaluating any animation.
     // Entity, mesh and morph poses belong to their exact world snapshots; a
     // SetStep here would overwrite them using mutable future controller data.
@@ -2451,14 +2493,14 @@ bool PracticeTools::RestoreState() {
                                     m_Snapshot->lastDeltaTime,
                                     m_Snapshot->lastDeltaTimeFree);
     CKSetRandomState(m_Snapshot->randomState);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (m_Snapshot->commitSound(m_Context, soundRestore.get()) != CK_OK) {
         m_BML->SendIngameMessage("Unable to restore sound runtime state");
         return false;
     }
     GetLogger()->Info("Sound runtime restore committed.");
 #endif
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (m_Snapshot->toolboxTimeCaptured)
         TT_TimeRestoreRuntimeStateV2(m_Context, m_Snapshot->toolboxFixedTicks,
                                    m_Snapshot->toolboxTime,
@@ -2471,7 +2513,7 @@ bool PracticeTools::RestoreState() {
                     m_Snapshot->toolboxRecordedClock);
     }
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // All hierarchy, mesh, animation and runtime setters have completed. Transfer
     // every stored matrix directly, so parent updates cannot perturb children.
     const auto restoreTransform = reinterpret_cast<RestoreEntityTransform>(
@@ -2496,7 +2538,7 @@ bool PracticeTools::RestoreState() {
     if (exactTransformsRestored)
         GetLogger()->Info("Exact transform restore: %zu entities.", exactTransformsRestored);
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // Scene and semantic restoration can attach/detach drawing functions.
     // Restore their saved order only after their owners and transforms settle.
     if (m_Snapshot->restoreRenderCallbacks(m_Context, m_Snapshot->renderCallbacks) != CK_OK) {
@@ -2506,7 +2548,7 @@ bool PracticeTools::RestoreState() {
     GetLogger()->Info("Renderer callback restore committed.");
 #endif
     // The Virtools menu/scheduler and SR timer have already been restored.
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (m_Snapshot->segmentLibrary) {
         if (!m_Snapshot->restoreSegment(m_Context, &m_Snapshot->segment)) {
             m_BML->SendIngameMessage("Unable to restore legacy split timer state");
@@ -2524,7 +2566,7 @@ bool PracticeTools::RestoreState() {
     }
     GetLogger()->Info("Restore pause audit: before=%d final=%d expected=%d.",
                       int(currentPaused), int(m_BML->IsPaused()), int(m_Snapshot->paused));
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     // Text, animation, plugin and pause setters have finished. Restore both
     // stored coordinate systems and the exact child order, including roots.
     const auto restore2d = reinterpret_cast<RestoreEntities2d>(
@@ -2632,12 +2674,12 @@ void PracticeTools::CollectSnapshotStorage(
 void PracticeTools::DestroySnapshot(Snapshot *snapshot) {
     if (!snapshot)
         return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
     if (snapshot->sound && snapshot->destroySound) snapshot->destroySound(snapshot->sound);
     snapshot->sound = nullptr;
-    if (snapshot->soundLibrary) dlclose(snapshot->soundLibrary);
+    if (snapshot->soundLibrary) PracticeCloseProvider(snapshot->soundLibrary);
     snapshot->soundLibrary = nullptr;
-    if (snapshot->segmentLibrary) dlclose(snapshot->segmentLibrary);
+    if (snapshot->segmentLibrary) PracticeCloseProvider(snapshot->segmentLibrary);
     snapshot->segmentLibrary = nullptr;
     snapshot->validateSegment = nullptr;
     snapshot->restoreSegment = nullptr;

@@ -3,13 +3,13 @@
 #include "CKAll.h"
 #include <unordered_map>
 #include <vector>
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
 #include "CKObjectLifetime.h"
 #endif
 
 namespace PracticeTimeline {
 using Identities = std::unordered_map<CK_ID, CKObject *>;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
 using LifetimeTokens = std::unordered_map<CK_ID, std::uint64_t>;
 inline bool MatchesSavedObject(CKContext *context, CK_ID id,
                                const Identities &identities, const LifetimeTokens &tokens) {

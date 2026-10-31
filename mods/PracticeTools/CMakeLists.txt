@@ -1,3 +1,14 @@
+option(PRACTICE_BUILD_STATIC "Link complete-world practice snapshots into a static source host" OFF)
+if(PRACTICE_BUILD_STATIC)
+    add_library(PracticeTools STATIC PracticeTools.cpp)
+    target_compile_features(PracticeTools PRIVATE cxx_std_20)
+    target_include_directories(PracticeTools PRIVATE "${ENGINE_SOURCE_DIR}/RenderEngine/include")
+    target_compile_definitions(PracticeTools PRIVATE PRACTICE_BUILD_STATIC=1
+        BMLEntry=Practice_Static_Entry BMLExit=Practice_Static_Exit)
+    target_link_libraries(PracticeTools PRIVATE BML CK2Static VxMathStatic)
+    return()
+endif()
+
 ballance_add_mod(PracticeTools
         SOURCES
         PracticeTools.cpp

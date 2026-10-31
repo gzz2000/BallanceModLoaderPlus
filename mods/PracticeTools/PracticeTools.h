@@ -11,7 +11,7 @@
 #include "OutputTopology.h"
 #include "InputTopology.h"
 #include "ParameterReferences.h"
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
 #include <CKEntityTransformState.h>
 #include <CKEntity2dState.h>
 #include <CKEntityUserBoxState.h>
@@ -47,7 +47,7 @@ extern "C" int TT_SimpleShadowRestoreSnapshot(
 extern "C" void TT_SimpleShadowDestroySnapshot(
     TT_SimpleShadowSnapshotHandle);
 extern "C" int TT_SimpleShadowIsRuntimeMaterial(CKContext *, CKMaterial *);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
 extern "C" int TT_TimeCaptureRuntimeStateV2(
     CKContext *, std::uint64_t *, double *, CKBOOL *, CKBOOL *);
 extern "C" int TT_TimeRestoreRuntimeStateV2(
@@ -138,7 +138,7 @@ private:
         CK_ID currentMesh = 0;
         std::vector<CK_ID> meshes;
         VxMatrix local;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         CKEntityTransformState exactTransform;
         CKEntityUserBoxState userBox;
         CKEntityVisibilityState visibilityHistory;
@@ -167,7 +167,7 @@ private:
     };
 
     struct Entity2dState {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         CKEntity2dState exactLayout;
         std::vector<CK_ID> children;
 #endif
@@ -388,7 +388,7 @@ private:
         // Address equality alone is insufficient: allocators can reuse it too.
         // Native tokens describe registrations and never rewind with gameplay.
         std::unordered_map<CK_ID, CKObject *> identities;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         std::unordered_map<CK_ID, uint64_t> lifetimeTokens;
 #endif
         std::unordered_map<CK_ID, IdentityInfo> identityInfo;
@@ -431,7 +431,7 @@ private:
         CKBehaviorRuntimeState *scheduler = nullptr;
         TT_PhysicsSnapshotHandle physics = nullptr;
         TT_ParticleSnapshotHandle particles = nullptr;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(PRACTICE_BUILD_STATIC)
         void *soundLibrary = nullptr;
         void *sound = nullptr;
         int (*prepareSound)(CKContext *, void *, void **) = nullptr;
