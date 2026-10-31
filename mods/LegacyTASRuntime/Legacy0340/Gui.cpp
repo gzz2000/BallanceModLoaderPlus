@@ -700,22 +700,34 @@ namespace LegacyBGui {
 
 		Vx2DVector mousePos, lastPos;
 		input->GetMousePosition(mousePos, false);
+		// Legacy widgets use homogeneous positions in the authored UI root,
+		// which can be centred inside a wider or taller browser viewport.
+		VxRect ui(0, 0, float(rc->GetWidth()), float(rc->GetHeight()));
+		if (CK2dEntity *root = rc->Get2dRoot(FALSE)) {
+			VxRect rect; root->GetRect(rect);
+			if (rect.GetWidth() > 0 && rect.GetHeight() > 0) ui = rect;
+		}
+		const auto relative = [&ui](Vx2DVector pos) {
+			return Vx2DVector((pos.x - ui.left) / ui.GetWidth(), (pos.y - ui.top) / ui.GetHeight());
+		};
+		mousePos = relative(mousePos);
 		for (CK_MOUSEBUTTON button = CK_MOUSEBUTTON_LEFT; button < CK_MOUSEBUTTON_4;
 			(*reinterpret_cast<int*>(&button))++) {
 			if (m_block ? input->IsMouseClicked(button) : input->oIsMouseClicked(button))
-				OnMouseDown(mousePos.x / rc->GetWidth(), mousePos.y / rc->GetHeight(), button);
+				OnMouseDown(mousePos.x, mousePos.y, button);
 		}
 
 		for (Button* button : m_buttons)
 			button->OnMouseLeave();
 		for (Button* button : m_buttons)
-			if (Intersect(mousePos.x / rc->GetWidth(), mousePos.y / rc->GetHeight(), button)) button->OnMouseEnter();
+			if (Intersect(mousePos.x, mousePos.y, button)) button->OnMouseEnter();
 
 		VxVector relPos;
 		input->GetMouseRelativePosition(relPos);
 		input->GetLastMousePosition(lastPos);
-		if (relPos.x != 0 && relPos.y != 0)
-			OnMouseMove(mousePos.x / rc->GetWidth(), mousePos.y / rc->GetHeight(), lastPos.x / rc->GetWidth(), lastPos.y / rc->GetHeight());
+		lastPos = relative(lastPos);
+		if (relPos.x != 0 || relPos.y != 0)
+			OnMouseMove(mousePos.x, mousePos.y, lastPos.x, lastPos.y);
 		if (relPos.z != 0)
 			OnMouseWheel(relPos.z);
 	}
