@@ -14,16 +14,9 @@ HookLifecycle::~HookLifecycle() {
 }
 
 bool HookLifecycle::Attach(CKInputManager *inputManager) {
-#if defined(BML_NATIVE_BALLANCED)
-    (void) inputManager;
-    if (OwnsObjectLoad() || OwnsPhysicalize())
-        return OwnsObjectLoad() && OwnsPhysicalize();
-    if (!AttachObjectLoad() || !AttachPhysicalize()) {
-        Detach();
-        return false;
-    }
-    return true;
-#else
+    // Native mods use the same InputHook facade as Windows mods. The native
+    // vtable slot adapter supports CKInputManager; skipping it leaves the
+    // public input interface null and silently disables legacy GUI input.
     if (m_Input || OwnsObjectLoad() || OwnsPhysicsPostProcess() || OwnsPhysicalize())
         return m_Input && InputHookOwnsActive(*m_Input) && OwnsObjectLoad() && OwnsPhysicalize();
 
@@ -37,7 +30,6 @@ bool HookLifecycle::Attach(CKInputManager *inputManager) {
         return false;
     }
     return true;
-#endif
 }
 
 bool HookLifecycle::Detach() {

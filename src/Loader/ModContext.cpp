@@ -387,7 +387,7 @@ bool ModContext::Init() {
     }
 
     if (!Overlay::ImGuiInitPlatform(m_CKContext)) {
-        m_Logger->Error("Failed to initialize Win32 platform backend for ImGui");
+        m_Logger->Error("Failed to initialize the ImGui platform backend");
         Overlay::ImGuiDestroyContext();
         ShutdownHooks();
         onig_end();
@@ -649,7 +649,8 @@ void ModContext::RegisterCommand(ICommand *cmd) {
     // Taken before the lock: this is a virtual the Mod calls across the DLL
     // boundary, so the return address is in whichever module is registering.
 #if defined(_WIN32)
-    void *const registrar = const_cast<void *>(ModuleFromAddress(_ReturnAddress()));
+    void *const registrar =
+        reinterpret_cast<void *>(ModuleFromAddress(_ReturnAddress()));
 #else
     void *const registrar = const_cast<void *>(ModuleFromAddress(__builtin_return_address(0)));
 #endif
@@ -1417,9 +1418,18 @@ void ModContext::ResetSRTimer() {
         m_Loader.GetBuiltinMod()->ResetSRTimer();
 }
 
+void ModContext::SetSRTimerPreciseState(double elapsedTimeMs, bool running) {
+    if (m_Loader.GetBuiltinMod())
+        m_Loader.GetBuiltinMod()->SetSRTimerPreciseState(elapsedTimeMs, running);
+}
+
 void ModContext::SetSRTimerState(float elapsedTimeMs, bool running) {
     if (m_Loader.GetBuiltinMod())
         m_Loader.GetBuiltinMod()->SetSRTimerState(elapsedTimeMs, running);
+}
+
+double ModContext::GetSRPreciseTime() {
+    return m_Loader.GetBuiltinMod() ? m_Loader.GetBuiltinMod()->GetSRPreciseTime() : 0.0;
 }
 
 float ModContext::GetSRTime() {

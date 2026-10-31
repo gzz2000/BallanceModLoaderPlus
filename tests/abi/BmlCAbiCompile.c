@@ -266,9 +266,15 @@ int BML_TestCAbiSpeedrunInterface(void) {
         return 0;
     {
         int running = 0;
+        BML_SpeedrunTimerSnapshot precise = {0};
+        if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, ReadTimerSnapshot) ||
+            !BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, WriteTimerSnapshot))
+            return 0;
         return state.ElapsedTime >= 0.0f &&
                speedrun->ReadTimerRunning(&running) == BML_OK &&
-               speedrun->WriteTimerState(state.ElapsedTime, running) == BML_OK;
+               speedrun->WriteTimerState(state.ElapsedTime, running) == BML_OK &&
+               speedrun->ReadTimerSnapshot(&precise) == BML_OK &&
+               speedrun->WriteTimerSnapshot(&precise) == BML_OK;
     }
 }
 
@@ -387,6 +393,16 @@ int BML_TestCAbiGameplayInterface(void) {
     highScoreStatus = gameplay->ReadHighScore(&highScore);
     if (highScoreStatus != BML_OK && highScoreStatus != BML_ERROR_UNAVAILABLE)
         return 0;
+
+    {
+        int paused = 0;
+        if (!BML_IFACE_HAS(gameplay, BML_GameplayInterface, RestorePauseState) ||
+            gameplay->ReadPauseState(NULL) != BML_ERROR_INVALID_PARAMETER ||
+            gameplay->RestorePauseState(2) != BML_ERROR_INVALID_PARAMETER ||
+            gameplay->ReadPauseState(&paused) != BML_OK ||
+            gameplay->RestorePauseState(paused) != BML_OK)
+            return 0;
+    }
 
     if (gameplay->ReadLevel(&level) != BML_OK || gameplay->ReadEnergy(&energy) != BML_OK)
         return 0;

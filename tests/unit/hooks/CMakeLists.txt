@@ -20,3 +20,26 @@ if (WIN32)
             VirtoolsSDK::VxMath
     )
 endif ()
+
+if (NOT WIN32)
+    add_executable(NativeHookAbiTest
+            NativeHookAbiTest.cpp
+            ${BML_SOURCE_DIR}/Hooks/VTablePatchPosix.cpp
+    )
+    target_include_directories(NativeHookAbiTest PRIVATE
+            ${BML_SOURCE_DIR}
+            ${BML_SOURCE_DIR}/Utils
+    )
+    target_link_libraries(NativeHookAbiTest PRIVATE VirtoolsSDK::CK2)
+    add_test(NAME NativeHookAbiTest COMMAND NativeHookAbiTest)
+endif ()
+
+if (NOT WIN32)
+    add_executable(NativeRenderSkipTest
+            NativeRenderSkipTest.cpp
+            ${BML_SOURCE_DIR}/Hooks/RenderHookPosix.cpp
+    )
+    target_include_directories(NativeRenderSkipTest PRIVATE ${BML_SOURCE_DIR})
+    target_link_libraries(NativeRenderSkipTest PRIVATE VirtoolsSDK::CK2)
+    add_test(NAME NativeRenderSkipTest COMMAND NativeRenderSkipTest)
+endif ()

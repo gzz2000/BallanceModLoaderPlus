@@ -3,6 +3,7 @@
 #include "HUD/SRTimer.h"
 
 #include <cstring>
+#include <vector>
 
 class SRTimerTest : public ::testing::Test {
 protected:
@@ -103,4 +104,69 @@ TEST_F(SRTimerTest, LongPlaySession) {
     float time = timer.GetTime();
     EXPECT_GT(time, 9900000.0f);
     EXPECT_LT(time, 10100000.0f);
+}
+
+TEST_F(SRTimerTest, PreciseSnapshotsSurviveRepeatedRestoreAndOverwrite) {
+    for (int savedTick : {1, 132, 264, 1000, 2000, 10000}) {
+        SCOPED_TRACE(savedTick);
+        timer.Reset(); timer.Start();
+        for (int i = 0; i < savedTick; ++i) timer.Update(1000.0f / 264.0f);
+        for (int overwrite = 0; overwrite < 3; ++overwrite) {
+            const double saved = timer.GetPreciseTime();
+            const bool running = timer.IsRunning();
+            std::vector<double> expected;
+            for (int i = 0; i < 264; ++i) {
+                timer.Update(i % 2 ? 1000.0f / 132.0f : 1000.0f / 264.0f);
+                expected.push_back(timer.GetPreciseTime());
+            }
+            for (int restore = 0; restore < 3; ++restore) {
+                timer.SetPreciseState(saved, running);
+                for (int i = 0; i < 264; ++i) {
+                    timer.Update(i % 2 ? 1000.0f / 132.0f : 1000.0f / 264.0f);
+                    const double actual = timer.GetPreciseTime();
+                    EXPECT_EQ(0, std::memcmp(&actual, &expected[i], sizeof(double)));
+                    EXPECT_EQ(static_cast<float>(expected[i]), timer.GetTime());
+                }
+            }
+        }
+    }
+}
+
+TEST_F(SRTimerTest, PrecisePausedSnapshotRetainsFractionalAccumulator) {
+    timer.Start();
+    for (int i = 0; i < 2000; ++i) timer.Update(1000.0f / 264.0f);
+    timer.Pause();
+    const double saved = timer.GetPreciseTime();
+    ASSERT_NE(saved, static_cast<double>(timer.GetTime()));
+    timer.Start(); timer.Update(1000.0f);
+    timer.SetPreciseState(saved, false);
+    EXPECT_FALSE(timer.IsRunning());
+    timer.Update(1000.0f);
+    const double restored = timer.GetPreciseTime();
+    EXPECT_EQ(0, std::memcmp(&saved, &restored, sizeof(double)));
+    EXPECT_TRUE(timer.IsDirty());
+}
+
+TEST_F(SRTimerTest, RecordedClockUsesLegacyAccumulationAndRestoresExactly) {
+    timer.Start();
+    const float dt = 1000.0f/264.0f;
+    float expected = 0;
+    for (int i=0; i<50000; ++i) { expected += dt; timer.Update(dt, true); }
+    EXPECT_EQ(timer.GetPreciseTime(), static_cast<double>(expected));
+    const double saved = timer.GetPreciseTime();
+    for (int cycle=0; cycle<3; ++cycle) {
+        timer.SetPreciseState(saved, true);
+        float branch = static_cast<float>(saved);
+        for (int i=0; i<1000; ++i) { branch += dt; timer.Update(dt, true); }
+        EXPECT_EQ(timer.GetPreciseTime(), static_cast<double>(branch));
+    }
+    // Clock-mode changes keep the accumulated value and switch future updates.
+    const double beforeNative = timer.GetPreciseTime();
+    timer.Update(dt, false);
+    EXPECT_EQ(timer.GetPreciseTime(), beforeNative + static_cast<double>(dt));
+    const float beforeRecorded = static_cast<float>(timer.GetPreciseTime());
+    timer.Update(dt, true);
+    EXPECT_EQ(timer.GetPreciseTime(), static_cast<double>(beforeRecorded+dt));
+    timer.Pause(); const double paused = timer.GetPreciseTime();
+    timer.Update(dt, true); EXPECT_EQ(timer.GetPreciseTime(), paused);
 }

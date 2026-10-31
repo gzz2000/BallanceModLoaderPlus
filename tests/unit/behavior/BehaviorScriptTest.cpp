@@ -49,14 +49,16 @@ public:
         if (!DefineResult)
             return DefineResult;
         out = NextBody++;
-        if (OnDefine) OnDefine();
+        if (auto callback = OnDefine) callback();
         return {};
     }
 
     Status Read(const ScriptIdentity &script, bool &active) override {
         Events.emplace_back("read");
-        if (OnRead)
-            OnRead();
+        // A callback may unregister itself. Keep its captures alive until it
+        // returns, just as the real dispatcher's active callback lease does.
+        if (auto callback = OnRead)
+            callback();
         if (!ReadResult)
             return ReadResult;
         active = ActiveRoot == script.Root.Id;
@@ -67,8 +69,8 @@ public:
                      bool reset) override {
         Events.push_back(active ? (reset ? "activate-reset" : "activate")
                                 : "deactivate");
-        if (OnSetActive)
-            OnSetActive();
+        if (auto callback = OnSetActive)
+            callback();
         if (!ActivityResult)
             return ActivityResult;
         ActiveRoot = active ? script.Root.Id : 0;

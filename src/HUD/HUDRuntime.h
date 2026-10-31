@@ -45,10 +45,14 @@ public:
     void PauseSRTimer();
     void ResetSRTimer();
     void SetSRTimerState(float elapsedTimeMs, bool running);
+    void SetSRTimerPreciseState(double elapsedTimeMs, bool running);
+    double GetSRPreciseTime() const;
     float GetSRTime() const;
     bool IsSRTimerRunning() const;
 
 private:
+    std::function<bool()> m_UsesRecordedClock;
+
     friend class HUDCommand;
 
     HUD &GetWindow() { return m_Window; }

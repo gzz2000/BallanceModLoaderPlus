@@ -37,7 +37,7 @@ std::string GetFileHash(const char *filename) {
     for (int i = 0; i < 4; i++) {
         char hash[10];
         CKDWORD crc = CKComputeDataCRC(data.first + segm[i], segm[i + 1] - segm[i]);
-        sprintf(hash, "%08lx", crc);
+        snprintf(hash, sizeof(hash), "%08x", static_cast<unsigned>(crc));
         res += hash;
     }
 
@@ -124,8 +124,10 @@ void SpiritTrail::OnLoadObject(const char *filename, CKBOOL isMap, const char *m
         CKDataArray *physBall = m_BML->GetArrayByName("Physicalize_GameBall");
         for (int i = 0; i < physBall->GetRowCount(); i++) {
             SpiritBall ball;
-            ball.name.resize(physBall->GetElementStringValue(i, 0, nullptr), '\0');
-            physBall->GetElementStringValue(i, 0, &ball.name[0]);
+            const int nameSize = physBall->GetElementStringValue(i, 0, nullptr, 0);
+            if (nameSize <= 1) continue;
+            ball.name.resize(nameSize, '\0');
+            physBall->GetElementStringValue(i, 0, &ball.name[0], nameSize);
             ball.name.pop_back();
             ball.obj = m_BML->Get3dObjectByName(ball.name.c_str());
 

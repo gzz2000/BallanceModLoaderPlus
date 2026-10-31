@@ -602,7 +602,7 @@ TEST_F(StringUtilsTest, UnescapeString) {
         EXPECT_EQ("A", utils::UnescapeString("\\u0041"));
 
         // Surrogate pair: U+1D11E MUSICAL SYMBOL G CLEF
-        std::string gclef_utf8 = utils::Utf16ToUtf8(L"\xD834\xDD1E");
+        std::string gclef_utf8 = utils::Utf16ToUtf8(L"\U0001D11E");
         EXPECT_EQ(gclef_utf8, utils::UnescapeString("\\uD834\\uDD1E"));
 
         // Non-BMP via \U
@@ -658,7 +658,7 @@ TEST_F(StringUtilsTest, EscapeStringAndRoundTrip) {
                                " ";
         // U+1F600 and U+1D11E
         original += "\xF0\x9F\x98\x80"; // U+1F600 in UTF-8
-        original += utils::Utf16ToUtf8(L"\xD834\xDD1E"); // U+1D11E
+        original += utils::Utf16ToUtf8(L"\U0001D11E"); // U+1D11E
 
         std::string escaped = utils::EscapeString(original.c_str());
         // Expect \uXXXX or \UXXXXXXXX sequences present
@@ -743,21 +743,21 @@ TEST_F(StringUtilsTest, CompareStringFlags) {
     using utils::CompareFlags;
 
     // Case-insensitive by flag
-    EXPECT_EQ(0, utils::CompareString(L"apple", L"APPLE", CompareFlags::kLinguisticIgnoreCase));
+    EXPECT_EQ(0, utils::CompareStrings(L"apple", L"APPLE", CompareFlags::kLinguisticIgnoreCase));
 
     // Width-insensitive: halfwidth vs fullwidth
-    EXPECT_EQ(0, utils::CompareString(L"A", L"\uFF21", CompareFlags::kIgnoreWidth)); // fullwidth 'A'
+    EXPECT_EQ(0, utils::CompareStrings(L"A", L"\uFF21", CompareFlags::kIgnoreWidth)); // fullwidth 'A'
 
     // Digits as numbers: "a10" > "a2"
-    EXPECT_LT(utils::CompareString(L"a2", L"a10", CompareFlags::kDigitsAsNumbers), 0);
-    EXPECT_GT(utils::CompareString(L"a10", L"a2", CompareFlags::kDigitsAsNumbers), 0);
+    EXPECT_LT(utils::CompareStrings(L"a2", L"a10", CompareFlags::kDigitsAsNumbers), 0);
+    EXPECT_GT(utils::CompareStrings(L"a10", L"a2", CompareFlags::kDigitsAsNumbers), 0);
 
     // Default flags combine the three; numeric comparison makes "2" < "10"
-    EXPECT_LT(utils::CompareString(L"\uFF21pple2", L"apple10"), 0);
-    EXPECT_LT(utils::CompareString(L"a2", L"a10"), 0);
+    EXPECT_LT(utils::CompareStrings(L"\uFF21pple2", L"apple10"), 0);
+    EXPECT_LT(utils::CompareStrings(L"a2", L"a10"), 0);
 
     // UTF-8 overload mirrors wide one (ASCII scope)
-    EXPECT_EQ(0, utils::CompareString(std::string("Test"), std::string("test"), CompareFlags::kLinguisticIgnoreCase));
+    EXPECT_EQ(0, utils::CompareStrings(std::string("Test"), std::string("test"), CompareFlags::kLinguisticIgnoreCase));
 }
 #endif
 

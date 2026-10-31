@@ -23,6 +23,8 @@ set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakeTargets")
 
 set(BML_BALLANCED_ROOT "" CACHE PATH
         "Optional Ballanced checkout used as the native Virtools SDK")
+set(BML_BALLANCED_BUILD "" CACHE PATH
+        "Optional matching Ballanced build directory (defaults to its native macOS build)")
 
 # Use relative paths
 if (WIN32)
@@ -75,6 +77,7 @@ cmake_dependent_option(
 option(BML_BUILD_UPDATER "Build the standalone BML updater" ON)
 option(BML_BUILD_MODS "Build the in-tree native Mods" OFF)
 option(BML_ENABLE_ANGELSCRIPT "Build optional AngelScript script support when CKAngelScript headers are available" OFF)
+option(BML_USE_SDL3_PLATFORM "Use SDL3 for the Player window and ImGui platform backend" OFF)
 set(CKANGELSCRIPT_ROOT "${PROJECT_SOURCE_DIR}/../CKAngelScript" CACHE PATH "Optional CKAngelScript source or install root")
 
 set(BML_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include" CACHE INTERNAL "")
@@ -85,15 +88,29 @@ set(BML_SOURCE_DIR "${PROJECT_SOURCE_DIR}/src" CACHE INTERNAL "")
 include("${PROJECT_SOURCE_DIR}/cmake/BMLBehaviorBlocksPublicSurface.cmake")
 
 if (BML_BALLANCED_ROOT AND EXISTS "${BML_BALLANCED_ROOT}/Source/CK2/include/CKAll.h")
-    set(_bml_ballanced_build "${BML_BALLANCED_ROOT}/build/macos-arm64-runtime")
+    if (BML_BALLANCED_BUILD)
+        set(_bml_ballanced_build "${BML_BALLANCED_BUILD}")
+    else ()
+        set(_bml_ballanced_build "${BML_BALLANCED_ROOT}/build/macos-arm64-runtime")
+    endif ()
+    # Header-only/test consumers also use the legacy SDK include variable.
+    set(VIRTOOLS_SDK_INCLUDE_DIR
+            "${BML_BALLANCED_ROOT}/Source/CK2/include"
+            "${BML_BALLANCED_ROOT}/Source/VxMath/include")
     foreach (_bml_sdk_library IN ITEMS CK2 VxMath)
         if (NOT TARGET VirtoolsSDK::${_bml_sdk_library})
             add_library(VirtoolsSDK::${_bml_sdk_library} SHARED IMPORTED)
+            if (WIN32)
+                set_target_properties(VirtoolsSDK::${_bml_sdk_library} PROPERTIES
+                        IMPORTED_LOCATION "${_bml_ballanced_build}/bin/${_bml_sdk_library}.dll"
+                        IMPORTED_IMPLIB "${_bml_ballanced_build}/lib/${_bml_sdk_library}.lib")
+            else ()
+                set_target_properties(VirtoolsSDK::${_bml_sdk_library} PROPERTIES
+                        IMPORTED_LOCATION "${_bml_ballanced_build}/lib/lib${_bml_sdk_library}.dylib")
+            endif ()
             set_target_properties(VirtoolsSDK::${_bml_sdk_library} PROPERTIES
-                    IMPORTED_LOCATION "${_bml_ballanced_build}/lib/lib${_bml_sdk_library}.dylib"
-                    INTERFACE_INCLUDE_DIRECTORIES
-                    "${BML_BALLANCED_ROOT}/Source/CK2/include;${BML_BALLANCED_ROOT}/Source/VxMath/include"
-            )
+                INTERFACE_INCLUDE_DIRECTORIES
+                "${BML_BALLANCED_ROOT}/Source/CK2/include;${BML_BALLANCED_ROOT}/Source/VxMath/include")
         endif ()
     endforeach ()
     message(STATUS "Using native Ballanced SDK: ${BML_BALLANCED_ROOT}")

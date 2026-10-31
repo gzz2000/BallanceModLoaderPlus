@@ -2,6 +2,8 @@
 #define BML_MODMANAGER_H
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 #include "CKBaseManager.h"
 #include "CKContext.h"
 
@@ -10,6 +12,8 @@
 #endif
 
 class ModContext;
+namespace LegacyExecuteBB { class Runtime; }
+namespace LegacyBGui { namespace Detail { struct World; } }
 
 class ModManager : public CKBaseManager {
 public:
@@ -21,6 +25,11 @@ public:
 
     CKERROR OnCKPlay() override;
     CKERROR OnCKReset() override;
+    // Optional native host contract. Completion must be called after a full
+    // CKContext::Process, including ObjectManager deferred destruction.
+    CKERROR SetPlayerDrivenStartup(CKBOOL enable);
+    CKERROR CompletePlayerStep();
+    void RegisterLegacyGuiWorld(const std::shared_ptr<LegacyBGui::Detail::World> &world);
     CKERROR PreClearAll() override;
     CKERROR SequenceToBeDeleted(CK_ID *objids, int count) override;
 
@@ -60,10 +69,18 @@ protected:
     bool StartRuntime();
     bool StopRuntime();
     void SynchronizeUiFonts();
+    void InvalidateLegacyGuiWorlds() noexcept;
 
     ModContext *m_ModContext;
     CKRenderContext *m_RenderContext = nullptr;
     std::uint64_t m_ReportedUiFontGeneration = 0;
+    bool m_PlayerDrivenStartup = false;
+    bool m_PlayerStartupPending = false;
+    CKDWORD m_PlayerStartupTick = 0;
+    // CK objects belong to the composition; this cache survives plain Reset,
+    // but must not survive ClearAll or context shutdown.
+    std::unique_ptr<LegacyExecuteBB::Runtime> m_LegacyHelpers;
+    std::vector<std::weak_ptr<LegacyBGui::Detail::World>> m_LegacyGuiWorlds;
 };
 
 #endif // BML_MODMANAGER_H

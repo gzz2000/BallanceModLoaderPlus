@@ -68,13 +68,19 @@ add_subdirectory(abi)
 add_subdirectory(codegen)
 add_subdirectory(sdk)
 add_subdirectory(unit)
-add_subdirectory(player)
+if (WIN32)
+    # This harness uses Win32 DLL fixtures, PowerShell staging and the legacy
+    # Windows Player. Native integration runs have their own host/driver.
+    add_subdirectory(player)
+endif ()
 if (BML_BUILD_UI_AUTOMATION)
     add_subdirectory(ui)
 endif ()
 
 add_subdirectory(smoke)
-add_subdirectory(release)
+if (WIN32) # Windows DLL/updater signing and PowerShell release packaging.
+    add_subdirectory(release)
+endif ()
 if (BML_BUILD_UPDATER)
     add_subdirectory(updater)
 endif ()

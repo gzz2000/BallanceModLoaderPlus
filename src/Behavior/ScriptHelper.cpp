@@ -1,6 +1,78 @@
 #include "BML/ScriptHelper.h"
 
 #include "Behavior/Engine/Graph.h"
+#include "CKBaseManager.h"
+#include <stdexcept>
+
+
+namespace {
+// DeleteLink intentionally keeps graph links and redirects them to an inert
+// behavior, matching the legacy API. The composition owns that behavior; a
+// process-global pointer cannot survive ClearAll or dynamic-object deletion.
+const CKGUID LinkSinkManagerGuid(0x6e7a4381, 0x2d056b94);
+const CKGUID LinkSinkPrototypeGuid(0x302561c4, 0x0d282980);
+
+class LinkSinkManager final : public CKBaseManager {
+public:
+    explicit LinkSinkManager(CKContext *context)
+        : CKBaseManager(context, LinkSinkManagerGuid, (CKSTRING) "BML Link Sink") {}
+
+    CKDWORD GetValidFunctionsMask() override {
+        return CKMANAGER_FUNC_PreClearAll | CKMANAGER_FUNC_OnCKEnd |
+               CKMANAGER_FUNC_OnSequenceToBeDeleted;
+    }
+    CKERROR PreClearAll() override { Reset(); return CK_OK; }
+    CKERROR OnCKEnd() override { Reset(); return CK_OK; }
+    CKERROR SequenceToBeDeleted(CK_ID *ids, int count) override {
+        for (int i = 0; i < count; ++i) {
+            if (ids[i] == m_Behavior || ids[i] == m_Input || ids[i] == m_Output) {
+                Reset();
+                break;
+            }
+        }
+        return CK_OK;
+    }
+
+    CKBehavior *Get() {
+        auto *object = m_Context->GetObject(m_Behavior);
+        if (object && object->GetClassID() == CKCID_BEHAVIOR) {
+            auto *behavior = static_cast<CKBehavior *>(object);
+            if (behavior->GetPrototypeGuid() == LinkSinkPrototypeGuid &&
+                behavior->GetInput(0) == m_Context->GetObject(m_Input) &&
+                behavior->GetOutput(0) == m_Context->GetObject(m_Output) &&
+                m_Input && m_Output)
+                return behavior;
+        }
+        Reset();
+        auto *behavior = static_cast<CKBehavior *>(m_Context->CreateObject(CKCID_BEHAVIOR));
+        if (!behavior)
+            throw std::runtime_error("Could not allocate the legacy link sink");
+        if (behavior->InitFromGuid(LinkSinkPrototypeGuid) != CK_OK ||
+            !behavior->GetInput(0) || !behavior->GetOutput(0)) {
+            m_Context->DestroyObject(behavior);
+            throw std::runtime_error("Legacy link sink prototype is unavailable");
+        }
+        m_Behavior = behavior->GetID();
+        m_Input = behavior->GetInput(0)->GetID();
+        m_Output = behavior->GetOutput(0)->GetID();
+        return behavior;
+    }
+
+    static LinkSinkManager *ForContext(CKContext *context) {
+        auto *manager = static_cast<LinkSinkManager *>(context->GetManagerByGuid(LinkSinkManagerGuid));
+        if (!manager) {
+            manager = new LinkSinkManager(context);
+            if (context->RegisterNewManager(manager) != CK_OK)
+                throw std::runtime_error("Could not register the legacy link sink manager");
+        }
+        return manager;
+    }
+
+private:
+    void Reset() { m_Behavior = m_Input = m_Output = 0; }
+    CK_ID m_Behavior = 0, m_Input = 0, m_Output = 0;
+};
+} // namespace
 
 namespace ScriptHelper {
     bool FindBB(CKBehavior *script, std::function<bool(CKBehavior *)> callback, const char *name, bool hierarchically,
@@ -241,17 +313,11 @@ namespace ScriptHelper {
     }
 
     void DeleteLink(CKBehavior *script, CKBehaviorLink *link) {
-        static CKBehavior *nop = nullptr;
-        static CKBehaviorIO *nopin = nullptr, *nopout = nullptr;
-        if (!nop) {
-            nop = (CKBehavior *) script->GetCKContext()->CreateObject(CKCID_BEHAVIOR);
-            nop->InitFromGuid(CKGUID(0x302561c4, 0xd282980));
-            nopin = nop->GetInput(0);
-            nopout = nop->GetOutput(0);
-        }
-
-        link->SetInBehaviorIO(nopout);
-        link->SetOutBehaviorIO(nopin);
+        if (!script || !link || script->GetCKContext() != link->GetCKContext())
+            throw std::invalid_argument("DeleteLink requires objects from the same context");
+        CKBehavior *nop = LinkSinkManager::ForContext(script->GetCKContext())->Get();
+        link->SetInBehaviorIO(nop->GetOutput(0));
+        link->SetOutBehaviorIO(nop->GetInput(0));
     }
 
     void DeleteBB(CKBehavior *script, CKBehavior *beh) {

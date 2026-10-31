@@ -87,6 +87,8 @@ public:
     void PauseSRTimer();
     void ResetSRTimer();
     void SetSRTimerState(float elapsedTimeMs, bool running);
+    void SetSRTimerPreciseState(double elapsedTimeMs, bool running);
+    double GetSRPreciseTime() const;
     float GetSRTime() const;
     bool IsSRTimerRunning() const;
 

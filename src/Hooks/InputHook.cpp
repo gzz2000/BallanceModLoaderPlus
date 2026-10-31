@@ -442,8 +442,12 @@ struct InputHook::Impl {
         if (s_Patch.IsInstalled())
             return s_Owner == owner && s_InputManager == im;
 
+#ifdef _WIN32
 #define INPUT_MANAGER_SLOT(Name) \
     (offsetof(CP_CLASS_VTABLE_NAME(CKInputManager)<CKInputManager>, Name) / sizeof(void *))
+#else
+#define INPUT_MANAGER_SLOT(Name) utils::VirtualMethodSlot(&CKInputManager::Name)
+#endif
 #define INPUT_MANAGER_PATCH(Name) \
     {INPUT_MANAGER_SLOT(Name), utils::TypeErase(&InputHook::Impl::CP_FUNC_HOOK_NAME(Name))}
 

@@ -43,7 +43,7 @@ protected:
         } else {
             // Fallback to system temp + fixed subdir
             g_TestLoaderDir = utils::GetTempPathW();
-            g_TestLoaderDir.append(L"\\AnsiPaletteTest");
+            g_TestLoaderDir.append(L"/AnsiPaletteTest");
             if (utils::DirectoryExistsW(g_TestLoaderDir)) {
                 utils::DeleteDirectoryW(g_TestLoaderDir);
             }
@@ -67,12 +67,12 @@ protected:
     }
 
     static std::wstring LoaderCfg() {
-        std::wstring p = g_TestLoaderDir; p.append(L"\\palette.ini");
+        std::wstring p = g_TestLoaderDir; p.append(L"/palette.ini");
         return p;
     }
 
     static std::wstring ThemesDir() {
-        std::wstring p = g_TestLoaderDir; p.append(L"\\themes");
+        std::wstring p = g_TestLoaderDir; p.append(L"/Themes");
         return p;
     }
 };
@@ -135,7 +135,7 @@ TEST_F(AnsiPaletteTest, SaveSampleCreatesFiles) {
     EXPECT_TRUE(utils::FileExistsW(LoaderCfg()));
     // Themes directory and nord theme should exist
     EXPECT_TRUE(utils::DirectoryExistsW(ThemesDir()));
-    std::wstring nord = ThemesDir(); nord.append(L"\\nord.ini");
+    std::wstring nord = ThemesDir(); nord.append(L"/nord.ini");
     EXPECT_TRUE(utils::FileExistsW(nord));
     // Second call should not overwrite
     bool wrote2 = pal.SaveSampleIfMissing();
@@ -201,8 +201,8 @@ TEST_F(AnsiPaletteTest, InvalidColorParsingLogsWarning) {
 TEST_F(AnsiPaletteTest, ThemeChainResolution) {
     // Create themes dir and parent/child themes
     utils::CreateDirectoryW(ThemesDir());
-    std::wstring parentP = ThemesDir(); parentP.append(L"\\parent.ini");
-    std::wstring childP = ThemesDir(); childP.append(L"\\child.ini");
+    std::wstring parentP = ThemesDir(); parentP.append(L"/parent.ini");
+    std::wstring childP = ThemesDir(); childP.append(L"/child.ini");
 
     std::wstring parent =
         L"# theme: parent\n[standard]\nblue = #010203\n";
@@ -237,9 +237,9 @@ TEST_F(AnsiPaletteTest, ThemeChainResolution) {
 
 TEST_F(AnsiPaletteTest, AvailableThemesAndActiveName) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\t1.ini", L"# t1\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\t2.ini", L"# t2\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\t3.theme", L"# t3\n");
+    utils::WriteTextFileW(ThemesDir() + L"/t1.ini", L"# t1\n");
+    utils::WriteTextFileW(ThemesDir() + L"/t2.ini", L"# t2\n");
+    utils::WriteTextFileW(ThemesDir() + L"/t3.theme", L"# t3\n");
 
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = t2\n");
 
@@ -324,15 +324,15 @@ TEST_F(AnsiPaletteTest, SetActiveThemeNameIdempotentAndRewrites) {
 
 TEST_F(AnsiPaletteTest, ResolveThemePathRecognizesExtensions) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\y.ini", L"# y\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\z.theme", L"# z\n");
+    utils::WriteTextFileW(ThemesDir() + L"/y.ini", L"# y\n");
+    utils::WriteTextFileW(ThemesDir() + L"/z.theme", L"# z\n");
     AnsiPalette pal;
     auto pathY = pal.ResolveThemePathW(L"y");
     auto pathZ = pal.ResolveThemePathW(L"z");
     EXPECT_TRUE(utils::FileExistsW(pathY));
     EXPECT_TRUE(utils::FileExistsW(pathZ));
     // .cfg is not supported (implicit or explicit)
-    utils::WriteTextFileW(ThemesDir() + L"\\x.cfg", L"# x\n");
+    utils::WriteTextFileW(ThemesDir() + L"/x.cfg", L"# x\n");
     auto pathX = pal.ResolveThemePathW(L"x");
     auto pathX2 = pal.ResolveThemePathW(L"x.cfg");
     EXPECT_FALSE(utils::FileExistsW(pathX));
@@ -342,8 +342,8 @@ TEST_F(AnsiPaletteTest, ResolveThemePathRecognizesExtensions) {
 
 TEST_F(AnsiPaletteTest, ThemeChainCycleStops) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\a.ini", L"[theme]\nbase = b\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\b.ini", L"[theme]\nbase = a\n");
+    utils::WriteTextFileW(ThemesDir() + L"/a.ini", L"[theme]\nbase = b\n");
+    utils::WriteTextFileW(ThemesDir() + L"/b.ini", L"[theme]\nbase = a\n");
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = a\n");
     AnsiPalette pal;
     pal.EnsureInitialized();
@@ -371,7 +371,7 @@ TEST_F(AnsiPaletteTest, ToningSaturationChangesColor) {
 TEST_F(AnsiPaletteTest, MixStrengthAffectsCubeAndGray) {
     // Prepare theme with custom primaries and endpoints
     utils::CreateDirectoryW(ThemesDir());
-    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"\\mix.ini");
+    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"/mix.ini");
     std::wstring mixTheme =
         L"# theme: mix\n[theme]\n\n[bright]\nred = #FF8080\ngreen = #80FF80\nblue = #8080FF\n\n[standard]\nblack = #101010\nwhite = #F0F0F0\n";
     utils::WriteTextFileW(mixThemeP, mixTheme);
@@ -555,8 +555,8 @@ TEST_F(AnsiPaletteTest, ResetThemeOptionsRemovesThemeSection) {
 TEST_F(AnsiPaletteTest, AvailableThemesDeduplicatesExtensions) {
     utils::CreateDirectoryW(ThemesDir());
     // same base with two extensions
-    utils::WriteTextFileW(ThemesDir() + L"\\dup.ini", L"# dup\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\dup.theme", L"# dup\n");
+    utils::WriteTextFileW(ThemesDir() + L"/dup.ini", L"# dup\n");
+    utils::WriteTextFileW(ThemesDir() + L"/dup.theme", L"# dup\n");
     AnsiPalette pal;
     pal.EnsureInitialized();
     auto names = pal.GetAvailableThemes();
@@ -566,7 +566,7 @@ TEST_F(AnsiPaletteTest, AvailableThemesDeduplicatesExtensions) {
 
 TEST_F(AnsiPaletteTest, ResolveThemePathExtensionCaseInsensitive) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\Case.ini", L"# x\n");
+    utils::WriteTextFileW(ThemesDir() + L"/Case.ini", L"# x\n");
     AnsiPalette pal;
     auto p = pal.ResolveThemePathW(L"Case.INI");
     EXPECT_TRUE(utils::FileExistsW(p));
@@ -581,7 +581,7 @@ TEST_F(AnsiPaletteTest, ExtractThemeNameSupportsThemeKey) {
 TEST_F(AnsiPaletteTest, ChainIncludesMissingParentWithExistsFalse) {
     utils::CreateDirectoryW(ThemesDir());
     // child exists, parent missing
-    utils::WriteTextFileW(ThemesDir() + L"\\child.ini", L"[theme]\nbase = parent\n");
+    utils::WriteTextFileW(ThemesDir() + L"/child.ini", L"[theme]\nbase = parent\n");
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = child\n");
     AnsiPalette pal;
     pal.EnsureInitialized();
@@ -603,7 +603,7 @@ TEST_F(AnsiPaletteTest, ActiveThemeNoneYieldsEmpty) {
 TEST_F(AnsiPaletteTest, CubeLinearVsSrgbMixHalf) {
     // Prepare mix theme for primaries and endpoints
     utils::CreateDirectoryW(ThemesDir());
-    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"\\mix.ini");
+    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"/mix.ini");
     std::wstring mixTheme =
         L"# theme: mix\n[theme]\n\n[bright]\nred = #FF8080\ngreen = #80FF80\nblue = #8080FF\n\n[standard]\nblack = #101010\nwhite = #F0F0F0\n";
     utils::WriteTextFileW(mixThemeP, mixTheme);
@@ -635,7 +635,7 @@ TEST_F(AnsiPaletteTest, CubeLinearVsSrgbMixHalf) {
 TEST_F(AnsiPaletteTest, GrayMixHalfIncreasesMidGray) {
     // With mix 0.5, mid gray should be slightly above standard
     utils::CreateDirectoryW(ThemesDir());
-    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"\\mix.ini");
+    std::wstring mixThemeP = ThemesDir(); mixThemeP.append(L"/mix.ini");
     std::wstring mixTheme =
         L"# theme: mix\n[theme]\n\n[standard]\nblack = #101010\nwhite = #F0F0F0\n";
     utils::WriteTextFileW(mixThemeP, mixTheme);
@@ -658,8 +658,8 @@ TEST_F(AnsiPaletteTest, ToningOnBrightnessMaxTurnsBlackToWhite) {
 
 TEST_F(AnsiPaletteTest, ThemeCycleLogsWarning) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\a.ini", L"[theme]\nbase = b\n");
-    utils::WriteTextFileW(ThemesDir() + L"\\b.ini", L"[theme]\nbase = a\n");
+    utils::WriteTextFileW(ThemesDir() + L"/a.ini", L"[theme]\nbase = b\n");
+    utils::WriteTextFileW(ThemesDir() + L"/b.ini", L"[theme]\nbase = a\n");
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = a\n");
     AnsiPalette pal;
     pal.EnsureInitialized();
@@ -717,7 +717,7 @@ TEST_F(AnsiPaletteTest, StandardNumericBoundariesIgnored) {
 
 TEST_F(AnsiPaletteTest, MainConfigOverridesThemeChain) {
     utils::CreateDirectoryW(ThemesDir());
-    utils::WriteTextFileW(ThemesDir() + L"\\parent.ini", L"[standard]\nred=#010203\n");
+    utils::WriteTextFileW(ThemesDir() + L"/parent.ini", L"[standard]\nred=#010203\n");
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = parent\n\n[standard]\nred=#0F0E0D\n");
     AnsiPalette pal; pal.ReloadFromFile();
     ImU32 c=0; ASSERT_TRUE(pal.GetColor(1, c)); EXPECT_EQ(c, IM_COL32(15,14,13,255));
@@ -810,7 +810,7 @@ TEST_F(AnsiPaletteTest, NoneInMainConfigYieldsEmptyChain) {
 TEST_F(AnsiPaletteTest, NoneInThemeStopsChain) {
     utils::CreateDirectoryW(ThemesDir());
     // child exists and declares base = none
-    utils::WriteTextFileW(ThemesDir() + L"\\child.ini", L"[theme]\nbase = none\n");
+    utils::WriteTextFileW(ThemesDir() + L"/child.ini", L"[theme]\nbase = none\n");
     // main config references child
     utils::WriteTextFileW(LoaderCfg(), L"[theme]\nbase = child\n");
     AnsiPalette pal; pal.EnsureInitialized();

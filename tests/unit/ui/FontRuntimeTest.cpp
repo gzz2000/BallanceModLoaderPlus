@@ -43,6 +43,7 @@ TEST(FontRuntimeTest, ImGuiStoresSupplementaryPlaneCodepoints) {
     EXPECT_EQ(static_cast<unsigned int>(static_cast<ImWchar>(0x1F600)), 0x1F600u);
 }
 
+#ifdef _WIN32 // Tests the Windows-installed Segoe catalogue.
 TEST_F(ImGuiContextFixture, WindowsCatalogProvidesCommonEmojiGlyphs) {
     BML::UI::FontRuntime runtime("missing-loader-font-directory");
     BML::UI::FontProfile profile;
@@ -71,6 +72,7 @@ TEST_F(ImGuiContextFixture, WindowsCatalogProvidesCommonEmojiGlyphs) {
     EXPECT_GT(glyph->X1, glyph->X0);
     EXPECT_GT(glyph->Y1, glyph->Y0);
 }
+#endif
 
 TEST_F(ImGuiContextFixture, DisabledWindowsFallbacksDoNotEnterTheAtlas) {
     BML::UI::FontRuntime runtime("missing-loader-font-directory");
@@ -90,6 +92,7 @@ TEST_F(ImGuiContextFixture, DisabledWindowsFallbacksDoNotEnterTheAtlas) {
         snapshot, BML::UI::FontSourceOrigin::WindowsCatalog));
 }
 
+#ifdef _WIN32 // Tests the Windows-installed Segoe catalogue.
 TEST_F(ImGuiContextFixture, PackagedPrimaryPrecedesWindowsFallbacks) {
     BML::UI::FontRuntime runtime(BML_TEST_FONT_DIRECTORY);
     const auto faces = runtime.ListLoaderFaces();
@@ -118,6 +121,7 @@ TEST_F(ImGuiContextFixture, PackagedPrimaryPrecedesWindowsFallbacks) {
     EXPECT_TRUE(font->IsGlyphInFont(static_cast<ImWchar>(0x4F60)));
     EXPECT_TRUE(font->IsGlyphInFont(static_cast<ImWchar>(0x1F600)));
 }
+#endif
 
 TEST_F(ImGuiContextFixture, DefaultProfileLoadsBundledLatinAndChineseWithoutSystemFonts) {
     BML::UI::FontRuntime runtime(BML_TEST_FONT_DIRECTORY);
@@ -265,7 +269,13 @@ TEST_F(ImGuiContextFixture, TextInspectionReportsRealMergedFontCoverage) {
     EXPECT_TRUE(coverage.FontAvailable);
     EXPECT_TRUE(coverage.ValidUtf8);
     EXPECT_EQ(coverage.CodepointCount, 4u);
+    #ifdef _WIN32
     EXPECT_TRUE(coverage.MissingCodepoints.empty());
+#else
+    // The packaged native fonts cover Latin/CJK, not Windows Segoe emoji.
+    ASSERT_EQ(coverage.MissingCodepoints.size(), 1u);
+    EXPECT_EQ(coverage.MissingCodepoints[0], 0x1F600u);
+#endif
 
     const std::string invalid(1, static_cast<char>(0xFF));
     const BML::UI::FontCoverage invalidCoverage =
@@ -296,7 +306,7 @@ TEST_F(ImGuiContextFixture, FallbackSizeChangesMergedGlyphsWithoutResizingPrimar
     ImFontBaked *baked = font->GetFontBaked(profile.ReferenceSize);
     ASSERT_NE(baked, nullptr);
     const ImFontGlyph *primary = baked->FindGlyphNoFallback('A');
-    const ImFontGlyph *fallback = baked->FindGlyphNoFallback(static_cast<ImWchar>(0x1F600));
+    const ImFontGlyph *fallback = baked->FindGlyphNoFallback(static_cast<ImWchar>(0x4E2D));
     ASSERT_NE(primary, nullptr);
     ASSERT_NE(fallback, nullptr);
     ASSERT_NE(fallback->SourceIdx, 0u);
@@ -321,7 +331,7 @@ TEST_F(ImGuiContextFixture, FallbackSizeChangesMergedGlyphsWithoutResizingPrimar
     baked = font->GetFontBaked(profile.ReferenceSize);
     ASSERT_NE(baked, nullptr);
     primary = baked->FindGlyphNoFallback('A');
-    fallback = baked->FindGlyphNoFallback(static_cast<ImWchar>(0x1F600));
+    fallback = baked->FindGlyphNoFallback(static_cast<ImWchar>(0x4E2D));
     ASSERT_NE(primary, nullptr);
     ASSERT_NE(fallback, nullptr);
     EXPECT_FLOAT_EQ(primary->Y1 - primary->Y0, primaryHeight);
@@ -340,8 +350,8 @@ TEST_F(ImGuiContextFixture, MergedFallbackKeepsItsStandaloneBaseline) {
     for (const BML::UI::FontSourceStatus &source :
          runtime.Inspect().Sources) {
         if (source.Origin ==
-                BML::UI::FontSourceOrigin::WindowsCatalog &&
-            source.RequestedFace == "Segoe UI Emoji" && source.Loaded) {
+                BML::UI::FontSourceOrigin::LoaderCatalog &&
+            source.RequestedFace == BML::UI::DefaultFallbackFont && source.Loaded) {
             fallbackPath = source.ResolvedPath;
             break;
         }
@@ -364,7 +374,7 @@ TEST_F(ImGuiContextFixture, MergedFallbackKeepsItsStandaloneBaseline) {
     ASSERT_NE(merged, nullptr);
     ASSERT_NE(standalone, nullptr);
 
-    constexpr ImWchar Probe = static_cast<ImWchar>(0x1F600);
+    constexpr ImWchar Probe = static_cast<ImWchar>(0x4E2D);
     const ImFontGlyph *mergedGlyph = merged->FindGlyphNoFallback(Probe);
     const ImFontGlyph *standaloneGlyph =
         standalone->FindGlyphNoFallback(Probe);

@@ -23,8 +23,8 @@
 // was valid a moment ago answers BML_ERROR_NOT_FOUND. Read the count again rather
 // than keeping it.
 //
-// Nothing here writes: changing gameplay state still goes through the Virtools
-// arrays directly.
+// Gameplay arrays remain read-only here. Interface 1.2 also exposes the loader's
+// pause bit for whole-world checkpoint restorers; it is not a pause command.
 #ifndef BML_GAMEPLAY_H
 #define BML_GAMEPLAY_H
 
@@ -37,7 +37,7 @@ BML_BEGIN_CDECLS
 
 #define BML_GAMEPLAY_INTERFACE_ID "bml.gameplay"
 #define BML_GAMEPLAY_INTERFACE_MAJOR 1
-#define BML_GAMEPLAY_INTERFACE_MINOR 1
+#define BML_GAMEPLAY_INTERFACE_MINOR 2
 
 // Capacity of each of the three name buffers below, terminator included.
 #define BML_GAMEPLAY_NAME_CAPACITY 128u
@@ -116,6 +116,15 @@ typedef struct BML_GameplayInterface {
     // BML_ERROR_UNAVAILABLE outside a level.
     int (BML_CDECL *ReadHighScore)(int *out);
     int (BML_CDECL *ReadCheatEnabled)(int *out);
+
+    // Added in 1.2. Available only in an active or paused level, otherwise
+    // BML_ERROR_UNAVAILABLE. Read leaves out unchanged on failure.
+    int (BML_CDECL *ReadPauseState)(int *out);
+
+    // Restore only the loader's pause bit (0 or 1); other values are invalid.
+    // Does not send gameplay messages, notify mods, change the timer or toggle
+    // the pause menu. The caller must restore those alongside the world state.
+    int (BML_CDECL *RestorePauseState)(int paused);
 } BML_GameplayInterface;
 
 #pragma pack(pop)
@@ -199,6 +208,24 @@ int ReadList(int (BML_CDECL *readCount)(std::size_t *),
 // for themselves, so call this directly only to probe.
 [[nodiscard]] inline int RequireApi() {
     return Detail::Interface() != nullptr ? BML_OK : BML_ERROR_NOT_FOUND;
+}
+
+[[nodiscard]] inline int ReadPauseState(bool &paused) {
+    const BML_GameplayInterface *gameplay = Detail::Interface();
+    if (!BML_IFACE_HAS(gameplay, BML_GameplayInterface, ReadPauseState))
+        return BML_ERROR_NOT_FOUND;
+    int value = 0;
+    const int status = gameplay->ReadPauseState(&value);
+    if (status == BML_OK)
+        paused = value != 0;
+    return status;
+}
+
+[[nodiscard]] inline int RestorePauseState(bool paused) {
+    const BML_GameplayInterface *gameplay = Detail::Interface();
+    if (!BML_IFACE_HAS(gameplay, BML_GameplayInterface, RestorePauseState))
+        return BML_ERROR_NOT_FOUND;
+    return gameplay->RestorePauseState(paused ? 1 : 0);
 }
 
 [[nodiscard]] inline int ReadLevel(LevelState &out) {

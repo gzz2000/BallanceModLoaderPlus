@@ -88,7 +88,7 @@ bool MigrateBMLConfig(ConfigData &values) {
         if (!ResolveOldFontPath(requested, resolved) || resolved.find(';') != std::string::npos) {
             needsManualSelection = true;
             keepOldSecondarySettings = true;
-        } else if (!resolved.empty() && utils::CompareString(resolved, primaryFace) != 0) {
+        } else if (!resolved.empty() && utils::CompareStrings(resolved, primaryFace) != 0) {
             values.Set("GUI", "FontFallbacks", IProperty::STRING, resolved);
         }
     }
@@ -106,9 +106,9 @@ bool MigrateBMLConfig(ConfigData &values) {
 
     for (const char *key : OldFontKeys) {
         if (keepOldSecondarySettings &&
-            (utils::CompareString(key, "EnableSecondaryFont") == 0 ||
-             utils::CompareString(key, "SecondaryFontFilename") == 0 ||
-             utils::CompareString(key, "SecondaryFontSize") == 0)) {
+            (utils::CompareStrings(key, "EnableSecondaryFont") == 0 ||
+             utils::CompareStrings(key, "SecondaryFontFilename") == 0 ||
+             utils::CompareStrings(key, "SecondaryFontSize") == 0)) {
             continue;
         }
         values.Remove("GUI", key);

@@ -1,6 +1,12 @@
 #include "SpeedrunShortcuts.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
+#endif
 #include <string>
 
 using namespace ScriptHelper;
@@ -10,6 +16,30 @@ constexpr auto kRestartConfirmationWindow = std::chrono::seconds(3);
 
 CK_ID ObjectId(CKObject *object) {
     return object ? object->GetID() : 0;
+}
+
+CKBehavior *FindButtonForTarget(
+    CKBehavior *graph, CK2dEntity *target, CKBehavior *&ownerGraph)
+{
+    if (!graph || !target)
+        return nullptr;
+    for (int i = 0; i < graph->GetSubBehaviorCount(); ++i) {
+        CKBehavior *candidate = graph->GetSubBehavior(i);
+        if (!candidate)
+            continue;
+        if (candidate->GetName() &&
+            std::string(candidate->GetName()) == "TT PushButton2" &&
+            candidate->GetOutputCount() > 2 && candidate->GetTargetParameter()) {
+            CKParameter *source = candidate->GetTargetParameter()->GetRealSource();
+            if (source && source->GetValueObject() == target) {
+                ownerGraph = graph;
+                return candidate;
+            }
+        }
+        if (CKBehavior *nested = FindButtonForTarget(candidate, target, ownerGraph))
+            return nested;
+    }
+    return nullptr;
 }
 }
 
@@ -55,6 +85,17 @@ void SpeedrunShortcuts::OnLoad() {
         "Reserved for BMMO cheat detection compatibility; inactive when no native BMMO client is loaded.");
 
     RefreshSettings();
+
+    // Opt-in regression harness support. The packaged game never defines this
+    // variable; automated snapshot tests use it to reach late-level physics
+    // mechanisms without mutating the user's progress database.
+    if (std::getenv("BALLANCE_SNAPSHOT_NAVIGATION_AUDIT")) {
+        m_BML->EnableCheat(true);
+        if (const char *level = std::getenv("BALLANCE_SNAPSHOT_LEVEL"))
+            m_AuditLevel = std::clamp(std::atoi(level), 1, 13);
+        if (const char *sector = std::getenv("BALLANCE_SNAPSHOT_SECTOR"))
+            m_AuditSector = std::max(std::atoi(sector), 1);
+    }
 }
 
 void SpeedrunShortcuts::OnModifyConfig(const char *, const char *, IProperty *) {
@@ -97,6 +138,149 @@ void SpeedrunShortcuts::OnLoadScript(const char *, CKBehavior *script) {
 }
 
 void SpeedrunShortcuts::OnProcess() {
+    if (m_AuditWarpFrames > 0 && --m_AuditWarpFrames == 0) {
+        SetCurrentSector(m_AuditSector);
+        if (m_AuditLevel == 4 && m_AuditSector == 4 &&
+            std::getenv("BALLANCE_SNAPSHOT_FAN_TEST"))
+            m_AuditPaperFrames = 90;
+        GetLogger()->Info("Snapshot audit navigation: requested sector %d.",
+                          m_AuditSector);
+        if (EnsureGameplayReferences()) {
+            GetLogger()->Info("Snapshot audit navigation: reset points=%d.",
+                              m_ResetPoints->GetRowCount());
+            for (int row = 0; row < m_ResetPoints->GetRowCount(); ++row) {
+                VxMatrix matrix;
+                if (m_ResetPoints->GetElementValue(row, 0, &matrix))
+                    GetLogger()->Info(
+                        "Snapshot audit reset[%d]=%.2f,%.2f,%.2f.", row + 1,
+                        matrix[3][0], matrix[3][1], matrix[3][2]);
+            }
+        }
+        const XObjectPointerArray &entities =
+            m_BML->GetCKContext()->GetObjectListByType(CKCID_3DENTITY, TRUE);
+        for (CKObject *object : entities) {
+            CK3dEntity *entity = CK3dEntity::Cast(object);
+            if (!entity)
+                continue;
+            for (int meshIndex = 0; meshIndex < entity->GetMeshCount(); ++meshIndex) {
+                CKMesh *mesh = entity->GetMesh(meshIndex);
+                const char *meshName = mesh ? mesh->GetName() : nullptr;
+                if (!meshName || !std::strstr(meshName, "Venti"))
+                    continue;
+                VxVector position;
+                entity->GetPosition(&position, nullptr);
+                GetLogger()->Info("Snapshot audit fan entity=%s mesh=%s pos=%.2f,%.2f,%.2f.",
+                                  entity->GetName(), meshName,
+                                  position.x, position.y, position.z);
+            }
+        }
+        for (const char *name : {"FixCube", "Ball_Paper", "Ball_Wood", "Ball_Stone"}) {
+            if (CK3dEntity *entity = m_BML->Get3dEntityByName(name)) {
+                VxVector position;
+                entity->GetPosition(&position, nullptr);
+                GetLogger()->Info(
+                    "Snapshot audit entity=%s pos=%.2f,%.2f,%.2f parent=%s.",
+                    name, position.x, position.y, position.z,
+                    entity->GetParent() && entity->GetParent()->GetName()
+                        ? entity->GetParent()->GetName() : "<none>");
+            }
+        }
+    }
+    if (m_AuditPaperFrames > 0 && --m_AuditPaperFrames == 0) {
+        CKBehavior *gameplay = m_BML->GetScriptByName("Gameplay_Ingame");
+        CKBehavior *trafoManager = gameplay
+            ? FindFirstBB(gameplay, "Trafo Manager") : nullptr;
+        CKBehavior *setNewBall = trafoManager
+            ? FindFirstBB(trafoManager, "set new Ball") : nullptr;
+        CKBehavior *switchParameter = setNewBall
+            ? FindFirstBB(setNewBall, "Switch On Parameter") : nullptr;
+        CKParameter *ballType = switchParameter && switchParameter->GetInputParameter(0)
+            ? switchParameter->GetInputParameter(0)->GetDirectSource() : nullptr;
+        CKDataArray *currentLevel = m_BML->GetArrayByName("CurrentLevel");
+        CK3dEntity *ball = currentLevel
+            ? CK3dEntity::Cast(currentLevel->GetElementObject(0, 1)) : nullptr;
+        if (ball && ballType && setNewBall) {
+            ExecuteBB::Unphysicalize(ball);
+            SetParamString(ballType, "paper");
+            setNewBall->ActivateInput(0);
+            setNewBall->Activate();
+            GetLogger()->Info("Snapshot audit navigation: transformed to paper ball.");
+            const unsigned int generation = m_LevelGeneration;
+            m_BML->AddTimer(CKDWORD{3}, [this, generation]() {
+                if (generation != m_LevelGeneration || !EnsureGameplayReferences())
+                    return;
+                CK3dEntity *paper = CK3dEntity::Cast(
+                    m_CurrentLevel->GetElementObject(0, 1));
+                using BeamEntity = int (*)(CKContext *, CK3dEntity *,
+                                            float, float, float);
+                BeamEntity beam = nullptr;
+#if !defined(_WIN32)
+                // Virtools loads building blocks with RTLD_LOCAL, so their
+                // exported symbols are intentionally absent from RTLD_DEFAULT.
+                // Resolve the already-loaded physics image explicitly instead
+                // of loading a second copy of the plug-in.
+                for (uint32_t i = 0; !beam && i < _dyld_image_count(); ++i) {
+                    const char *image = _dyld_get_image_name(i);
+                    if (!image || !std::strstr(image, "libphysics_RT.dylib"))
+                        continue;
+                    if (void *handle = dlopen(image, RTLD_LAZY | RTLD_NOLOAD)) {
+                        beam = reinterpret_cast<BeamEntity>(
+                            dlsym(handle, "TT_PhysicsAuditBeamEntity"));
+                        dlclose(handle);
+                    }
+                }
+#endif
+                if (paper && beam &&
+                    beam(m_Context, paper, 1719.06f, -225.0f, -670.73f) == CK_OK)
+                    GetLogger()->Info(
+                        "Snapshot audit navigation: beamed live paper physics above fan.");
+                else
+                    GetLogger()->Warn(
+                        "Snapshot audit navigation: could not beam paper physics above fan.");
+            });
+        }
+    }
+    if (m_AuditNavigationPhase != 0 && ++m_AuditNavigationFrames > 180) {
+        m_AuditNavigationFrames = 0;
+        if (m_AuditNavigationPhase == 1) {
+            if (CKBehavior *menu = m_BML->GetScriptByName("Menu_Main")) {
+                if (CKBehavior *start = FindFirstBB(menu, "Start")) {
+                    start->ActivateInput(0);
+                    start->Activate();
+                    m_AuditNavigationPhase = 2;
+                    GetLogger()->Info("Snapshot audit navigation: opened level menu.");
+                }
+            }
+        } else if (m_AuditNavigationPhase == 2) {
+            if (CKBehavior *menu = m_BML->GetScriptByName("Menu_Start")) {
+                char buttonName[32];
+                std::snprintf(buttonName, sizeof(buttonName),
+                              "M_Start_But_%02d", m_AuditLevel);
+                CK2dEntity *buttonTarget =
+                    m_BML->Get2dEntityByName(buttonName);
+                CKBehavior *owner = nullptr;
+                CKBehavior *button =
+                    FindButtonForTarget(menu, buttonTarget, owner);
+                CKBehaviorLink *link = button && owner
+                    ? FindNextLink(owner, button->GetOutput(2),
+                                   "Parameter Selector")
+                    : nullptr;
+                CKBehaviorIO *selectorInput =
+                    link ? link->GetOutBehaviorIO() : nullptr;
+                CKBehavior *selector =
+                    selectorInput ? selectorInput->GetOwner() : nullptr;
+                if (selector && selectorInput) {
+                    selectorInput->Activate(TRUE);
+                    selector->Activate();
+                    m_AuditNavigationPhase = 0;
+                    GetLogger()->Info(
+                        "Snapshot audit navigation: selected Level %d through authored button link.",
+                        m_AuditLevel);
+                }
+            }
+        }
+    }
+
     if (!m_Input || !m_Keys[Modifier] || !m_Input->IsKeyDown(m_Keys[Modifier]))
         return;
 
@@ -134,6 +318,19 @@ void SpeedrunShortcuts::OnProcess() {
             return;
         }
     }
+}
+
+void SpeedrunShortcuts::OnPostStartMenu() {
+    if (std::getenv("BALLANCE_SNAPSHOT_NAVIGATION_AUDIT")) {
+        m_AuditNavigationPhase = 1;
+        m_AuditNavigationFrames = 0;
+    }
+}
+
+void SpeedrunShortcuts::OnBallNavActive() {
+    m_BallNavInactive = false;
+    if (std::getenv("BALLANCE_SNAPSHOT_NAVIGATION_AUDIT") && m_AuditWarpFrames < 0)
+        m_AuditWarpFrames = 180;
 }
 
 bool SpeedrunShortcuts::EnsureGameplayReferences() {

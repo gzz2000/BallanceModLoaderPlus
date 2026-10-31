@@ -170,6 +170,13 @@ void BMLMod::OnLoad() {
     m_CKContext = m_BML->GetCKContext();
     m_TimeManager = m_BML->GetTimeManager();
 
+#if defined(__APPLE__)
+    // DefaultLevel initializes physical debris while synchronous assets load.
+    // Retail submits the actual loading-frame duration to those simulations;
+    // applying the gameplay lockstep here truncates their initialization.
+    m_TimeManager->SetFixedDeltaTime(0.0f);
+#endif
+
     auto behavior = Behavior::Session::Open(GetID());
     if (behavior)
         m_Behavior = behavior.Take();
@@ -354,6 +361,11 @@ void BMLMod::OnModifyConfig(const char *category, const char *key, IProperty *pr
 }
 
 void BMLMod::OnPreStartMenu() {
+#if defined(__APPLE__)
+    // The authored menu transition ends bootstrap. Resume Player's gameplay
+    // step here, independently of render refresh and the practice speed limit.
+    m_TimeManager->SetFixedDeltaTime(500.0f / 132.0f);
+#endif
     m_Console.CloseCommandBar();
     m_HUD.OnMenuStart();
 }
@@ -704,8 +716,16 @@ void BMLMod::ResetSRTimer() {
     m_HUD.ResetSRTimer();
 }
 
+void BMLMod::SetSRTimerPreciseState(double elapsedTimeMs, bool running) {
+    m_HUD.SetSRTimerPreciseState(elapsedTimeMs, running);
+}
+
 void BMLMod::SetSRTimerState(float elapsedTimeMs, bool running) {
     m_HUD.SetSRTimerState(elapsedTimeMs, running);
+}
+
+double BMLMod::GetSRPreciseTime() const {
+    return m_HUD.GetSRPreciseTime();
 }
 
 float BMLMod::GetSRTime() const {

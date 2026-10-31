@@ -23,8 +23,9 @@ public:
     void OnModifyConfig(const char *category, const char *key, IProperty *property) override;
     void OnLoadScript(const char *filename, CKBehavior *script) override;
     void OnProcess() override;
+    void OnPostStartMenu() override;
 
-    void OnBallNavActive() override { m_BallNavInactive = false; }
+    void OnBallNavActive() override;
     void OnBallNavInactive() override { m_BallNavInactive = true; }
     void OnPreLoadLevel() override;
     void OnPreExitLevel() override;
@@ -69,4 +70,10 @@ private:
     unsigned int m_LevelGeneration = 1;
 
     std::chrono::steady_clock::time_point m_LastRestartPress{};
+    int m_AuditNavigationPhase = 0;
+    int m_AuditNavigationFrames = 0;
+    int m_AuditWarpFrames = -1;
+    int m_AuditPaperFrames = -1;
+    int m_AuditLevel = 4;
+    int m_AuditSector = 4;
 };

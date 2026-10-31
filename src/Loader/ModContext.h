@@ -349,6 +349,13 @@ public:
     bool IsInLevel() const { return m_GamePhase == GamePhase::ActiveLevel || m_GamePhase == GamePhase::PausedLevel; }
     bool IsPaused() override { return m_GamePhase == GamePhase::PausedLevel; }
     bool IsPlaying() override { return m_GamePhase == GamePhase::ActiveLevel; }
+    // Checkpoint restoration only; gameplay event handlers own normal changes.
+    bool RestoreLevelPauseState(bool paused) {
+        if (!IsInLevel())
+            return false;
+        m_GamePhase = paused ? GamePhase::PausedLevel : GamePhase::ActiveLevel;
+        return true;
+    }
 
     void OpenModsMenu();
     void CloseModsMenu();
@@ -372,6 +379,8 @@ public:
     void PauseSRTimer();
     void ResetSRTimer();
     void SetSRTimerState(float elapsedTimeMs, bool running);
+    void SetSRTimerPreciseState(double elapsedTimeMs, bool running);
+    double GetSRPreciseTime();
     float GetSRTime();
     bool IsSRTimerRunning();
 

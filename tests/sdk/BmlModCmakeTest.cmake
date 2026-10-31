@@ -1,3 +1,6 @@
+# These probes deliberately model a Windows SDK consumer, on any host.
+set(WIN32 TRUE)
+set(APPLE FALSE)
 if(NOT DEFINED BML_MOD_CMAKE OR "${BML_MOD_CMAKE}" STREQUAL "")
     message(FATAL_ERROR "BmlModCmakeTest needs BML_MOD_CMAKE.")
 endif()

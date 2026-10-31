@@ -9,12 +9,14 @@ add_bml_test(StringUtilsTest
         BMLUtils
 )
 
+if (WIN32) # Win32 IMM wire format / Windows filesystem semantics.
 add_bml_test(PathUtilsTest
         SOURCES
         PathUtilsTest.cpp
         DEPENDENCIES
         BMLUtils
 )
+endif ()
 
 add_bml_test(IniFileTest
         SOURCES

@@ -10,6 +10,8 @@ add_subdirectory(zip EXCLUDE_FROM_ALL)
 # Oniguruma
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "")
 add_subdirectory(oniguruma EXCLUDE_FROM_ALL)
+# Consumers may also include the system regex.h (e.g. GoogleTest on POSIX).
+target_compile_definitions(onig INTERFACE ONIG_ESCAPE_REGEX_T_COLLISION)
 
 # utf8.h
 add_library(utf8 INTERFACE)

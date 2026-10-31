@@ -1,6 +1,8 @@
 #include "HUD/SRTimer.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 void SRTimer::Reset() {
     m_Time = 0.0;
@@ -16,15 +18,31 @@ void SRTimer::Pause() {
     m_Running = false;
 }
 
-void SRTimer::Update(float deltaTimeMs) {
+void SRTimer::Update(float deltaTimeMs, bool recordedArithmetic) {
+    // Recorded clocks retain legacy float accumulation for TAS compatibility;
+    // ordinary play uses the native double accumulator. The owner derives this
+    // from the toolbox clock, so restoring that clock restores the policy too.
+    // Retain the explicit diagnostic override for independent A/B experiments.
+    static const int overrideArithmetic = [] {
+        const char *value = std::getenv("BALLANCE_DIAG_LEGACY_SR_TIMER");
+        return value ? (std::strcmp(value, "1") == 0 ? 1 : 0) : -1;
+    }();
+    const bool legacyArithmetic = overrideArithmetic < 0 ? recordedArithmetic : overrideArithmetic != 0;
     if (m_Running) {
-        m_Time += (double)deltaTimeMs;
+        if (legacyArithmetic)
+            m_Time = static_cast<float>(static_cast<float>(m_Time) + deltaTimeMs);
+        else
+            m_Time += static_cast<double>(deltaTimeMs);
         m_Dirty = true;
     }
 }
 
 void SRTimer::SetState(float elapsedTimeMs, bool running) {
-    m_Time = elapsedTimeMs >= 0.0f ? static_cast<double>(elapsedTimeMs) : 0.0;
+    SetPreciseState(static_cast<double>(elapsedTimeMs), running);
+}
+
+void SRTimer::SetPreciseState(double elapsedTimeMs, bool running) {
+    m_Time = elapsedTimeMs >= 0.0 ? elapsedTimeMs : 0.0;
     m_Running = running;
     m_Dirty = true;
 }

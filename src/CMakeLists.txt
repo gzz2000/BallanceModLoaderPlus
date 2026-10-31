@@ -163,6 +163,9 @@ set(BML_LOADER_SOURCES
         Loader/ModContext.cpp
         Loader/ModLoader.cpp
         Loader/ModManager.cpp
+        ../mods/LegacyTASRuntime/Legacy0340/HelperRuntime.cpp
+        ../mods/LegacyTASRuntime/Legacy0340/GuiRuntime.cpp
+        ../mods/LegacyTASRuntime/Legacy0340/Gui.cpp
         Loader/NativeModRegistry.cpp
 )
 
@@ -419,7 +422,7 @@ set(BML_UI_SOURCES
         UI/Gui/Text.cpp
 )
 
-if (NOT WIN32)
+if (NOT WIN32 OR BML_USE_SDL3_PLATFORM)
     list(REMOVE_ITEM BML_UI_SOURCES
         UI/Ime/Runtime.cpp
         UI/Ime/Tsf.cpp
@@ -754,7 +757,7 @@ set(IMGUI_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/UI/imgui_impl_ck2.cpp
 )
 
-if (WIN32)
+if (WIN32 AND NOT BML_USE_SDL3_PLATFORM)
     list(APPEND IMGUI_HEADERS ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.h)
     list(APPEND IMGUI_SOURCES ${IMGUI_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
 else ()
@@ -808,7 +811,8 @@ target_link_libraries(BML
 
 if (WIN32)
     target_link_libraries(BML PRIVATE minhook imm32 comctl32 ole32 oleaut32 uuid)
-else ()
+endif ()
+if (NOT WIN32 OR BML_USE_SDL3_PLATFORM)
     target_link_libraries(BML PRIVATE SDL3::SDL3)
 endif ()
 
@@ -823,6 +827,7 @@ target_compile_definitions(BML
         $<$<PLATFORM_ID:Windows>:_WIN32_WINNT=0x0A00>
         $<$<PLATFORM_ID:Windows>:WINVER=0x0A00>
         BML_NATIVE_BALLANCED=$<BOOL:${BML_BALLANCED_ROOT}>
+        BML_USE_SDL3_PLATFORM=$<BOOL:${BML_USE_SDL3_PLATFORM}>
         BML_ENABLE_ANGELSCRIPT=$<BOOL:${BML_WITH_ANGELSCRIPT}>
         BML_ENABLE_BEHAVIOR_TEST_INTERFACE=$<BOOL:${BML_ENABLE_BEHAVIOR_TEST_INTERFACE}>
         BML_ENABLE_UI_AUTOMATION=$<BOOL:${BML_BUILD_UI_AUTOMATION}>

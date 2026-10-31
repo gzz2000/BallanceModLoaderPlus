@@ -652,7 +652,7 @@ namespace utils {
 
 #undef CompareString
 
-    int CompareString(const std::wstring &a, const std::wstring &b,
+    int CompareStrings(const std::wstring &a, const std::wstring &b,
                       uint32_t flags, const std::wstring &localeName) {
         const int r = ::CompareStringEx(ToLocaleName(localeName), MapFlags(flags),
             a.c_str(), -1,
@@ -664,7 +664,7 @@ namespace utils {
         return ToTri(r);
     }
 
-    int CompareString(const std::string &aUtf8, const std::string &bUtf8,
+    int CompareStrings(const std::string &aUtf8, const std::string &bUtf8,
                       uint32_t flags, const std::wstring &localeName) {
         const std::wstring wa = Utf8ToUtf16(aUtf8);
         const std::wstring wb = Utf8ToUtf16(bUtf8);
@@ -679,7 +679,7 @@ namespace utils {
         return ToTri(r);
     }
 #else
-    int CompareString(const std::wstring &a, const std::wstring &b,
+    int CompareStrings(const std::wstring &a, const std::wstring &b,
                       uint32_t flags, const std::wstring &localeName) {
         (void) localeName;
         if (flags & kLinguisticIgnoreCase) {
@@ -696,9 +696,9 @@ namespace utils {
         return 0;
     }
 
-    int CompareString(const std::string &aUtf8, const std::string &bUtf8,
+    int CompareStrings(const std::string &aUtf8, const std::string &bUtf8,
                       uint32_t flags, const std::wstring &localeName) {
-        return CompareString(Utf8ToUtf16(aUtf8), Utf8ToUtf16(bUtf8), flags, localeName);
+        return CompareStrings(Utf8ToUtf16(aUtf8), Utf8ToUtf16(bUtf8), flags, localeName);
     }
 #endif
 }

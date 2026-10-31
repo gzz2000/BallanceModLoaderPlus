@@ -9,7 +9,7 @@
 #include "imgui_internal.h"
 #include "UI/imgui_impl_ck2.h"
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !BML_USE_SDL3_PLATFORM
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -28,6 +28,11 @@ namespace Overlay {
     bool g_RendererInitialized = false;
     bool g_DrawDataReady = false;
     bool g_NewFrame = false;
+
+    static bool IsHeadlessOverlay() {
+        const char *value = std::getenv("BALLANCE_HEADLESS");
+        return value && value[0] != '\0' && value[0] != '0';
+    }
 
     ImGuiContext *GetImGuiContext() {
         return g_ImGuiContext;
@@ -79,7 +84,15 @@ namespace Overlay {
     bool ImGuiInitPlatform(CKContext *context) {
         ImGuiContextScope scope;
 
-#if defined(_WIN32)
+        // Deterministic physics/TAS CI uses the null rasterizer and has no
+        // desktop window.  Keep the ImGui context alive because BML and mods
+        // legitimately use its key/state API, but do not initialize a window
+        // backend or attach platform input. TAS input is supplied through the
+        // CK input hook in this mode.
+        if (IsHeadlessOverlay())
+            return true;
+
+#if defined(_WIN32) && !BML_USE_SDL3_PLATFORM
         HWND window = context ? static_cast<HWND>(context->GetMainWindow()) : nullptr;
         const bool initialized = window && ImGui_ImplWin32_Init(window);
 #else
@@ -89,7 +102,7 @@ namespace Overlay {
         if (!initialized)
             return false;
         if (!PlatformInput::Attach(window)) {
-#if defined(_WIN32)
+#if defined(_WIN32) && !BML_USE_SDL3_PLATFORM
             ImGui_ImplWin32_Shutdown();
 #else
             ImGui_ImplSDL3_Shutdown();
@@ -123,7 +136,7 @@ namespace Overlay {
         ImGuiContextScope scope;
 
         PlatformInput::Detach();
-#if defined(_WIN32)
+#if defined(_WIN32) && !BML_USE_SDL3_PLATFORM
         ImGui_ImplWin32_Shutdown();
 #else
         ImGui_ImplSDL3_Shutdown();
@@ -158,10 +171,12 @@ namespace Overlay {
                 ImGui::EndFrame();
             }
 
-#if defined(_WIN32)
-            ImGui_ImplWin32_NewFrame();
+#if defined(_WIN32) && !BML_USE_SDL3_PLATFORM
+            if (g_PlatformInitialized)
+                ImGui_ImplWin32_NewFrame();
 #else
-            ImGui_ImplSDL3_NewFrame();
+            if (g_PlatformInitialized)
+                ImGui_ImplSDL3_NewFrame();
 #endif
             ImGui_ImplCK2_NewFrame();
             ImGui::NewFrame();

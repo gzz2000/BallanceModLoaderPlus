@@ -25,7 +25,7 @@ BML_BEGIN_CDECLS
 
 #define BML_SPEEDRUN_INTERFACE_ID "bml.speedrun"
 #define BML_SPEEDRUN_INTERFACE_MAJOR 1
-#define BML_SPEEDRUN_INTERFACE_MINOR 1
+#define BML_SPEEDRUN_INTERFACE_MINOR 2
 
 // ElapsedTime is in milliseconds, and matches IBML::GetSRScore.
 // This is a C struct and has no default member
@@ -34,6 +34,13 @@ BML_BEGIN_CDECLS
 typedef struct BML_SpeedrunTimerState {
     float ElapsedTime;
 } BML_SpeedrunTimerState;
+
+// Interface 1.2: lossless native timer state for in-memory rewind. This is
+// separate from the unchanged four-byte TimerState used by older mods.
+typedef struct BML_SpeedrunTimerSnapshot {
+    double ElapsedTime;
+    int Running;
+} BML_SpeedrunTimerSnapshot;
 
 typedef struct BML_SpeedrunInterface {
     BML_InterfaceHeader Header;
@@ -65,6 +72,11 @@ typedef struct BML_SpeedrunInterface {
     // Added in interface 1.1. The original TimerState remains unchanged so
     // Mods compiled against 1.0 keep their four-byte output buffer.
     int (BML_CDECL *WriteTimerState)(float elapsedTime, int running);
+
+    // Added in 1.2. Null pointers, non-finite or negative elapsed time are
+    // invalid. Read does not change the accumulator; write restores it exactly.
+    int (BML_CDECL *ReadTimerSnapshot)(BML_SpeedrunTimerSnapshot *out);
+    int (BML_CDECL *WriteTimerSnapshot)(const BML_SpeedrunTimerSnapshot *state);
 } BML_SpeedrunInterface;
 
 #pragma pack(pop)
@@ -76,6 +88,7 @@ BML_END_CDECLS
 namespace BML::Speedrun {
 
 using TimerState = BML_SpeedrunTimerState;
+using TimerSnapshot = BML_SpeedrunTimerSnapshot;
 
 namespace Detail {
 
@@ -147,6 +160,20 @@ inline const BML_SpeedrunInterface *Interface() {
     if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, WriteTimerState))
         return BML_ERROR_NOT_FOUND;
     return speedrun->WriteTimerState(elapsedTime, running ? 1 : 0);
+}
+
+[[nodiscard]] inline int ReadTimerSnapshot(TimerSnapshot &out) {
+    const BML_SpeedrunInterface *speedrun = Detail::Interface();
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, ReadTimerSnapshot))
+        return BML_ERROR_NOT_FOUND;
+    return speedrun->ReadTimerSnapshot(&out);
+}
+
+[[nodiscard]] inline int WriteTimerSnapshot(const TimerSnapshot &state) {
+    const BML_SpeedrunInterface *speedrun = Detail::Interface();
+    if (!BML_IFACE_HAS(speedrun, BML_SpeedrunInterface, WriteTimerSnapshot))
+        return BML_ERROR_NOT_FOUND;
+    return speedrun->WriteTimerSnapshot(&state);
 }
 
 } // namespace BML::Speedrun

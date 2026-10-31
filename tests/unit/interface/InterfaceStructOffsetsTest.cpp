@@ -25,6 +25,7 @@ namespace {
     EXPECT_EQ(offsetof(Interface, member), static_cast<std::size_t>(golden))   \
         << #Interface "::" #member " moved"
 
+#if UINTPTR_MAX == UINT32_MAX
 // The header every interface starts with. Its layout is as frozen as the
 // members that follow it.
 TEST(InterfaceStructOffsets, InterfaceHeaderLayout) {
@@ -291,7 +292,9 @@ TEST(InterfaceStructOffsets, GameplayInterface) {
     EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, ReadResetpoint, 40);
     EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, ReadHighScore, 44);
     EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, ReadCheatEnabled, 48);
-    EXPECT_EQ(sizeof(BML_GameplayInterface), static_cast<std::size_t>(52));
+    EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, ReadPauseState, 52);
+    EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, RestorePauseState, 56);
+    EXPECT_EQ(sizeof(BML_GameplayInterface), static_cast<std::size_t>(60));
     ExpectGrowthRules<BML_GameplayInterface>("bml.gameplay", 44, 0, BML_GAMEPLAY_INTERFACE_MINOR);
 }
 
@@ -341,7 +344,49 @@ TEST(InterfaceStructOffsets, SpeedrunInterface) {
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ResetTimer, 28);
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerRunning, 32);
     EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, WriteTimerState, 36);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerSnapshot, 40);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, WriteTimerSnapshot, 44);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunTimerSnapshot, ElapsedTime, 0);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunTimerSnapshot, Running, 8);
+    EXPECT_EQ(sizeof(BML_SpeedrunTimerState), 4u);
     ExpectGrowthRules<BML_SpeedrunInterface>("bml.speedrun", 32, 0, BML_SPEEDRUN_INTERFACE_MINOR);
 }
+
+#else
+// Native arm64 ABI is LP64, independently frozen from the legacy Win32 ABI.
+// The common header starts with8-byte size_t and has an aligned8-byte ID pointer; API slots are8bytes.
+TEST(InterfaceStructOffsets, NativeHeaderAndTimerSnapshot) {
+    EXPECT_EQ(sizeof(void *), 8u);
+    EXPECT_GOLDEN_OFFSET(BML_InterfaceHeader, StructSize, 0);
+    EXPECT_GOLDEN_OFFSET(BML_InterfaceHeader, MajorVersion, 8);
+    EXPECT_GOLDEN_OFFSET(BML_InterfaceHeader, MinorVersion, 10);
+    EXPECT_GOLDEN_OFFSET(BML_InterfaceHeader, InterfaceId, 16);
+    EXPECT_EQ(sizeof(BML_InterfaceHeader), 24u);
+    EXPECT_GOLDEN_OFFSET(BML_TimeInterface, ReadClock, 24);
+    EXPECT_EQ(sizeof(BML_TimeInterface), 32u);
+    EXPECT_EQ(sizeof(BML_TimeClock), 16u);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunTimerSnapshot, ElapsedTime, 0);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunTimerSnapshot, Running, 8);
+    EXPECT_EQ(sizeof(BML_SpeedrunTimerSnapshot), 16u);
+    EXPECT_EQ(sizeof(BML_SpeedrunTimerState), 4u);
+}
+TEST(InterfaceStructOffsets, NativeSpeedrunAndPauseSlots) {
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerState, 24);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, SetTimerVisible, 32);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, StartTimer, 40);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, PauseTimer, 48);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ResetTimer, 56);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerRunning, 64);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, WriteTimerState, 72);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, ReadTimerSnapshot, 80);
+    EXPECT_GOLDEN_OFFSET(BML_SpeedrunInterface, WriteTimerSnapshot, 88);
+    EXPECT_EQ(sizeof(BML_SpeedrunInterface), 96u);
+    EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, ReadPauseState, 104);
+    EXPECT_GOLDEN_OFFSET(BML_GameplayInterface, RestorePauseState, 112);
+    EXPECT_EQ(sizeof(BML_GameplayInterface), 120u);
+    EXPECT_TRUE(std::is_standard_layout<BML_SpeedrunInterface>::value);
+    EXPECT_TRUE(std::is_standard_layout<BML_GameplayInterface>::value);
+}
+#endif
 
 } // namespace

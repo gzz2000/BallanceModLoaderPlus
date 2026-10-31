@@ -12,8 +12,12 @@ public:
     void Start();
     void Pause();
 
-    void Update(float deltaTime);
+    void Update(float deltaTime, bool recordedArithmetic = false);
     void SetState(float elapsedTimeMs, bool running);
+
+    // Full native accumulator for in-memory rewind; GetTime keeps the legacy float API.
+    double GetPreciseTime() const { return m_Time; }
+    void SetPreciseState(double elapsedTimeMs, bool running);
 
     float GetTime() const;
     const char *GetFormattedTime() const;

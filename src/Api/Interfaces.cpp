@@ -100,6 +100,26 @@ int BML_CDECL GameplayReadCheatEnabled(int *out) {
     });
 }
 
+int BML_CDECL GameplayReadPauseState(int *out) {
+    if (!out)
+        return BML_ERROR_INVALID_PARAMETER;
+    return ServeOnMainThread([out](ModContext &context) {
+        if (!context.IsInLevel())
+            return BML_ERROR_UNAVAILABLE;
+        *out = context.IsPaused() ? 1 : 0;
+        return BML_OK;
+    });
+}
+
+int BML_CDECL GameplayRestorePauseState(int paused) {
+    if (paused != 0 && paused != 1)
+        return BML_ERROR_INVALID_PARAMETER;
+    return ServeOnMainThread([paused](ModContext &context) {
+        return context.RestoreLevelPauseState(paused != 0)
+            ? BML_OK : BML_ERROR_UNAVAILABLE;
+    });
+}
+
 int BML_CDECL SpeedrunReadTimerState(BML_SpeedrunTimerState *out) {
     if (!out)
         return BML_ERROR_INVALID_PARAMETER;
@@ -123,6 +143,27 @@ int BML_CDECL SpeedrunWriteTimerState(float elapsedTime, int running) {
         return BML_ERROR_INVALID_PARAMETER;
     return ServeOnMainThread([elapsedTime, running](ModContext &context) {
         context.SetSRTimerState(elapsedTime, running != 0);
+        return BML_OK;
+    });
+}
+
+int BML_CDECL SpeedrunReadTimerSnapshot(BML_SpeedrunTimerSnapshot *out) {
+    if (!out)
+        return BML_ERROR_INVALID_PARAMETER;
+    return ServeOnMainThread([out](ModContext &context) {
+        *out = {};
+        out->ElapsedTime = context.GetSRPreciseTime();
+        out->Running = context.IsSRTimerRunning() ? 1 : 0;
+        return BML_OK;
+    });
+}
+
+int BML_CDECL SpeedrunWriteTimerSnapshot(const BML_SpeedrunTimerSnapshot *state) {
+    if (!state || !std::isfinite(state->ElapsedTime) || state->ElapsedTime < 0.0)
+        return BML_ERROR_INVALID_PARAMETER;
+    const BML_SpeedrunTimerSnapshot saved = *state;
+    return ServeOnMainThread([saved](ModContext &context) {
+        context.SetSRTimerPreciseState(saved.ElapsedTime, saved.Running != 0);
         return BML_OK;
     });
 }
@@ -407,6 +448,8 @@ const BML_SpeedrunInterface kSpeedrunInterface = {
     &SpeedrunResetTimer,
     &SpeedrunReadTimerRunning,
     &SpeedrunWriteTimerState,
+    &SpeedrunReadTimerSnapshot,
+    &SpeedrunWriteTimerSnapshot,
 };
 
 const BML_GameplayInterface kGameplayInterface = {
@@ -422,6 +465,8 @@ const BML_GameplayInterface kGameplayInterface = {
     &GameplayReadResetpoint,
     &GameplayReadHighScore,
     &GameplayReadCheatEnabled,
+    &GameplayReadPauseState,
+    &GameplayRestorePauseState,
 };
 
 const BML_SceneInterface kSceneInterface = {

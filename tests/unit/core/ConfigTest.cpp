@@ -3,6 +3,7 @@
 
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -10,7 +11,11 @@
 #include <locale>
 #include <memory>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "BML/IMod.h"
 
@@ -56,16 +61,16 @@ void Logger::Error(const char *fmt, ...) {
 }
 
 void Logger::Log(const char *level, const char *fmt, va_list args) {
-    SYSTEMTIME sys;
-    GetLocalTime(&sys);
+    const auto now = std::time(nullptr);
+    const std::tm sys = *std::localtime(&now);
 
     FILE *out_files[] = {
         stdout,
     };
 
     for (FILE *file : out_files) {
-        fprintf(file, "[%02d/%02d/%d %02d:%02d:%02d.%03d] ", sys.wMonth, sys.wDay,
-                sys.wYear, sys.wHour, sys.wMinute, sys.wSecond, sys.wMilliseconds);
+        fprintf(file, "[%02d/%02d/%d %02d:%02d:%02d.%03d] ", sys.tm_mon + 1, sys.tm_mday,
+                sys.tm_year + 1900, sys.tm_hour, sys.tm_min, sys.tm_sec, 0);
         fprintf(file, "[%s/%s]: ", m_ModName, level);
         vfprintf(file, fmt, args);
         fputc('\n', file);
@@ -139,11 +144,20 @@ public:
 class ConfigTest : public ::testing::Test {
 protected:
     void SetUp() override {
+#ifdef _WIN32
         std::array<wchar_t, MAX_PATH> directory{};
         ASSERT_GT(GetTempPathW(static_cast<DWORD>(directory.size()), directory.data()), 0u);
         std::array<wchar_t, MAX_PATH> path{};
         ASSERT_NE(GetTempFileNameW(directory.data(), L"BML", 0, path.data()), 0u);
         configPath = path.data();
+#else
+        std::string pattern = (std::filesystem::temp_directory_path()/"bml-config-XXXXXX").string();
+        std::vector<char> name(pattern.begin(), pattern.end()); name.push_back(0);
+        const int fd = mkstemp(name.data());
+        ASSERT_GE(fd, 0);
+        close(fd);
+        configPath = std::filesystem::path(name.data()).wstring();
+#endif
         mockMod = new MockMod(nullptr);
         config = new Config(mockMod);
     }
@@ -151,7 +165,7 @@ protected:
     void TearDown() override {
         delete config;
         delete mockMod;
-        DeleteFileW(configPath.c_str());
+        std::filesystem::remove(std::filesystem::path(configPath));
     }
 
     MockMod *mockMod = nullptr;
@@ -232,7 +246,7 @@ TEST_F(ConfigTest, FailedLoadCannotOverwriteExistingDocument) {
 TEST_F(ConfigTest, FailedLoadRemainsProtectedAfterTheFileDisappears) {
     WriteConfig("General {\n");
     EXPECT_FALSE(config->Load(configPath.c_str()));
-    ASSERT_TRUE(DeleteFileW(configPath.c_str()));
+    ASSERT_TRUE(std::filesystem::remove(std::filesystem::path(configPath)));
     config->GetProperty("General", "Count")->SetInteger(7);
     EXPECT_FALSE(config->Save(configPath.c_str()));
     EXPECT_TRUE(config->IsDirty());
@@ -240,7 +254,7 @@ TEST_F(ConfigTest, FailedLoadRemainsProtectedAfterTheFileDisappears) {
 }
 
 TEST_F(ConfigTest, MissingDocumentCanBeGeneratedFromCodeDefaults) {
-    ASSERT_TRUE(DeleteFileW(configPath.c_str()));
+    ASSERT_TRUE(std::filesystem::remove(std::filesystem::path(configPath)));
     EXPECT_FALSE(config->Load(configPath.c_str()));
     EXPECT_EQ(config->GetLoadStatus(), Config::LoadStatus::Missing);
     EXPECT_TRUE(config->CanSave());
@@ -252,7 +266,7 @@ TEST_F(ConfigTest, MissingDocumentCanBeGeneratedFromCodeDefaults) {
 }
 
 TEST_F(ConfigTest, MissingDocumentCreatedAfterLoadIsNotOverwritten) {
-    ASSERT_TRUE(DeleteFileW(configPath.c_str()));
+    ASSERT_TRUE(std::filesystem::remove(std::filesystem::path(configPath)));
     EXPECT_FALSE(config->Load(configPath.c_str()));
     config->GetProperty("General", "Count")->SetInteger(7);
     const std::string document = "General {\nI Count 42\n}\n";
@@ -264,6 +278,7 @@ TEST_F(ConfigTest, MissingDocumentCreatedAfterLoadIsNotOverwritten) {
     EXPECT_EQ(preserved, document);
 }
 
+#ifdef _WIN32 // Windows mandatory sharing locks have no POSIX equivalent.
 TEST_F(ConfigTest, ReadFailureCannotBeSavedAfterTheSharingLockIsReleased) {
     const std::string document = "General {\nI Count 42\n}\n";
     WriteConfig(document);
@@ -281,6 +296,7 @@ TEST_F(ConfigTest, ReadFailureCannotBeSavedAfterTheSharingLockIsReleased) {
     ASSERT_TRUE(utils::ReadFileBytesW(configPath, preserved));
     EXPECT_EQ(preserved, document);
 }
+#endif
 
 TEST_F(ConfigTest, SuccessfulReloadReenablesPersistence) {
     WriteConfig("General {\n");
@@ -289,7 +305,7 @@ TEST_F(ConfigTest, SuccessfulReloadReenablesPersistence) {
     WriteConfig("General {\nI Count 42\n}\n");
     ASSERT_TRUE(config->Load(configPath.c_str()));
     EXPECT_TRUE(config->CanSave());
-    EXPECT_EQ(config->GetLoadError(), ERROR_SUCCESS);
+    EXPECT_EQ(config->GetLoadError(), 0u);
     IProperty *count = config->GetProperty("General", "Count");
     EXPECT_EQ(count->GetInteger(), 42);
     count->SetInteger(7);
@@ -299,6 +315,7 @@ TEST_F(ConfigTest, SuccessfulReloadReenablesPersistence) {
     EXPECT_EQ(loaded.GetProperty("General", "Count")->GetInteger(), 7);
 }
 
+#ifdef _WIN32 // Windows mandatory sharing locks have no POSIX equivalent.
 TEST_F(ConfigTest, FailedReplacementPreservesOriginalAndDirtyState) {
     config->GetProperty("General", "Count")->SetInteger(7);
     ASSERT_TRUE(config->Save(configPath.c_str()));
@@ -319,7 +336,9 @@ TEST_F(ConfigTest, FailedReplacementPreservesOriginalAndDirtyState) {
     ASSERT_TRUE(loaded.Load(configPath.c_str()));
     EXPECT_EQ(loaded.GetProperty("General", "Count")->GetInteger(), 42);
 }
+#endif
 
+#ifdef _WIN32 // Windows mandatory sharing locks have no POSIX equivalent.
 TEST_F(ConfigTest, FailedAutomaticSaveDoesNotRetryWithoutAnotherChange) {
     IProperty *count = config->GetProperty("General", "Count");
     count->SetInteger(7);
@@ -343,6 +362,7 @@ TEST_F(ConfigTest, FailedAutomaticSaveDoesNotRetryWithoutAnotherChange) {
     ASSERT_TRUE(loaded.Load(configPath.c_str()));
     EXPECT_EQ(loaded.GetProperty("General", "Count")->GetInteger(), 43);
 }
+#endif
 
 TEST_F(ConfigTest, ExplicitSaveCanRetryUnchangedDirtyValues) {
     config->GetProperty("General", "Count")->SetInteger(42);
@@ -1513,7 +1533,7 @@ TEST_F(ConfigTest, LoadingDuplicateEntriesUpdatesOneStableProperty) {
     EXPECT_TRUE(config->TakePendingNotifications().empty());
     EXPECT_FALSE(config->IsDirty());
 
-    _wremove(filename);
+    std::filesystem::remove(std::filesystem::path(filename));
 }
 
 TEST_F(ConfigTest, SaveUsesSnapshottedModMetadata) {
@@ -1533,7 +1553,7 @@ TEST_F(ConfigTest, SaveUsesSnapshottedModMetadata) {
     EXPECT_EQ(0, mockMod->nameReadCount);
     EXPECT_EQ(0, mockMod->versionReadCount);
 
-    _wremove(filename);
+    std::filesystem::remove(std::filesystem::path(filename));
 }
 
 // Performance test

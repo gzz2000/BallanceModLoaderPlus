@@ -62,11 +62,11 @@ namespace {
     };
 
     bool EqualFace(const std::string &left, const std::string &right) {
-        return utils::CompareString(left, right) == 0;
+        return utils::CompareStrings(left, right) == 0;
     }
 
     bool FaceLess(const std::string &left, const std::string &right) {
-        return utils::CompareString(left, right) < 0;
+        return utils::CompareStrings(left, right) < 0;
     }
 
     bool ContainsFace(const std::vector<std::string> &faces, const std::string &candidate) {

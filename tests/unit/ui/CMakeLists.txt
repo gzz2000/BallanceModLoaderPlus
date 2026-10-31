@@ -25,12 +25,14 @@ add_bml_test(ColorCodecTest
         ${BML_SOURCE_DIR}/UI/ColorCodec.cpp
 )
 
+if (WIN32) # Win32 IMM wire format / Windows filesystem semantics.
 add_bml_test(ImeStateTest
         SOURCES
         ImeStateTest.cpp
         ${BML_SOURCE_DIR}/UI/Ime/NativePresentation.cpp
         ${BML_SOURCE_DIR}/UI/Ime/State.cpp
 )
+endif ()
 
 add_bml_test(ImePresentationTest
         SOURCES

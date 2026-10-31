@@ -134,12 +134,31 @@ void HUDRuntime::OnUnload() {
     m_FPSElement = nullptr;
     m_SRElement = nullptr;
     m_CheatElement = nullptr;
+    m_UsesRecordedClock = {};
     m_BML = nullptr;
 }
 
 void HUDRuntime::OnProcess(float frameDeltaSeconds, float gameDeltaMilliseconds) {
     m_FPSCounter.Update(frameDeltaSeconds);
-    m_SRTimer.Update(gameDeltaMilliseconds);
+#if defined(BML_NATIVE_BALLANCED)
+    if (!m_UsesRecordedClock && m_BML) {
+        // Resolve via the owning RTLD_LOCAL plugin, not the global symbol table.
+        auto *plugins = CKGetPluginManager();
+        auto *entry = plugins ? plugins->FindComponent(CKGUID(0x60632E28, 0x7D3B3C7D)) : nullptr;
+        auto *dll = entry ? plugins->GetPluginDllInfo(entry->m_PluginDllIndex) : nullptr;
+        using QueryClock = int (*)(CKContext *, std::uint64_t *, double *, CKBOOL *, CKBOOL *);
+        auto query = dll ? reinterpret_cast<QueryClock>(dll->GetFunctionPtr(
+            const_cast<char *>("TT_TimeCaptureRuntimeStateV2"))) : nullptr;
+        if (query) {
+            CKContext *context = m_BML->GetCKContext();
+            m_UsesRecordedClock = [query, context] {
+                std::uint64_t ticks = 0; double time = 0; CKBOOL timing = FALSE, recorded = FALSE;
+                return query(context, &ticks, &time, &timing, &recorded) == CK_OK && recorded != FALSE;
+            };
+        }
+    }
+#endif
+    m_SRTimer.Update(gameDeltaMilliseconds, m_UsesRecordedClock && m_UsesRecordedClock());
 
     UpdateCheatState(m_BML && m_BML->IsCheatEnabled());
     UpdateTimerDisplay();
@@ -225,11 +244,19 @@ void HUDRuntime::ResetSRTimer() {
 }
 
 void HUDRuntime::SetSRTimerState(float elapsedTimeMs, bool running) {
-    m_SRTimer.SetState(elapsedTimeMs, running);
+    SetSRTimerPreciseState(elapsedTimeMs, running);
+}
+
+void HUDRuntime::SetSRTimerPreciseState(double elapsedTimeMs, bool running) {
+    m_SRTimer.SetPreciseState(elapsedTimeMs, running);
     if (auto container = HUDCast<HUDContainer>(m_SRElement)) {
         if (container->IsFadeEnabled())
             container->SetFadeTarget(running ? 1.0f : 0.5f);
     }
+}
+
+double HUDRuntime::GetSRPreciseTime() const {
+    return m_SRTimer.GetPreciseTime();
 }
 
 float HUDRuntime::GetSRTime() const {

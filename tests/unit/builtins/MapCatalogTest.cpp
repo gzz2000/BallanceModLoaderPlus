@@ -4,7 +4,8 @@
 #include <type_traits>
 
 #include <gtest/gtest.h>
-#include <windows.h>
+#include <chrono>
+#include <atomic>
 
 #include "CustomMaps/MapCatalog.h"
 
@@ -18,9 +19,10 @@ static_assert(!std::is_move_assignable_v<MapEntry>);
 class TemporaryMapDirectory {
 public:
     TemporaryMapDirectory() {
+        static std::atomic<unsigned long> sequence{0};
         m_Path = std::filesystem::temp_directory_path() /
-                 (L"bml-map-catalog-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
-                  std::to_wstring(GetTickCount64()));
+                 ("bml-map-catalog-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                  std::to_string(sequence++));
         std::filesystem::create_directories(m_Path);
     }
 
@@ -168,10 +170,10 @@ TEST(MapCatalogTest, ListsOnlyLoadableRelativePathsAtConfiguredDepth) {
     MapCatalog catalog;
     ASSERT_TRUE(catalog.Refresh(maps.Path().wstring(), 2, nullptr));
     EXPECT_EQ(catalog.ListFiles({}, 10),
-              (std::vector<std::string>{"folder\\second.cmo", "first.nmo"}));
+              (std::vector<std::string>{(std::filesystem::path("folder") / "second.cmo").string(), "first.nmo"}));
     EXPECT_EQ(catalog.ListFiles("SECOND", 10),
-              (std::vector<std::string>{"folder\\second.cmo"}));
-    EXPECT_EQ(catalog.ListFiles({}, 1), (std::vector<std::string>{"folder\\second.cmo"}));
+              (std::vector<std::string>{(std::filesystem::path("folder") / "second.cmo").string()}));
+    EXPECT_EQ(catalog.ListFiles({}, 1), (std::vector<std::string>{(std::filesystem::path("folder") / "second.cmo").string()}));
 }
 
 TEST(MapCatalogTest, ListFilterFoldsUtf8Case) {

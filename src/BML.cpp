@@ -27,6 +27,17 @@ CKERROR RemoveModManager(CKContext *context) {
     return CK_OK;
 }
 
+// Versioned native host handshake; ordinary hosts retain OnCKPlay startup.
+PLUGIN_EXPORT CKERROR BML_SetPlayerDrivenStartupV1(CKContext *context, CKBOOL enable) {
+    auto *manager = context ? ModManager::GetManager(context) : nullptr;
+    return manager ? manager->SetPlayerDrivenStartup(enable) : CKERR_NOTINITIALIZED;
+}
+
+PLUGIN_EXPORT CKERROR BML_CompletePlayerStepV1(CKContext *context) {
+    auto *manager = context ? ModManager::GetManager(context) : nullptr;
+    return manager ? manager->CompletePlayerStep() : CKERR_NOTINITIALIZED;
+}
+
 CKPluginInfo g_PluginInfo[2];
 
 static bool EnsureProcessHooks();
@@ -108,11 +119,28 @@ static bool HookCreateCKBehaviorPrototypeRuntime() {
             return false;
 
         LPVOID lpCreateCKBehaviorPrototypeRunTimeProc =
-            (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototypeRunTime@@YAPAVCKBehaviorPrototype@@PAD@Z");
+            (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototypeRunTime@@YAPAVCKBehaviorPrototype@@PBD@Z");
         LPVOID lpCreateCKBehaviorPrototypeProc =
-            (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototype@@YAPAVCKBehaviorPrototype@@PAD@Z");
+            (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototype@@YAPAVCKBehaviorPrototype@@PBD@Z");
+        // Virtools 2.1 exported mutable char* signatures.  Ballanced keeps
+        // source-correct const char* signatures, while older compatible CK2
+        // builds may still expose the original decorated names.
+        if (!lpCreateCKBehaviorPrototypeRunTimeProc)
+            lpCreateCKBehaviorPrototypeRunTimeProc =
+                (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototypeRunTime@@YAPAVCKBehaviorPrototype@@PAD@Z");
+        if (!lpCreateCKBehaviorPrototypeProc)
+            lpCreateCKBehaviorPrototypeProc =
+                (LPVOID) ::GetProcAddress(handle, "?CreateCKBehaviorPrototype@@YAPAVCKBehaviorPrototype@@PAD@Z");
         if (!lpCreateCKBehaviorPrototypeRunTimeProc || !lpCreateCKBehaviorPrototypeProc)
             return false;
+
+        // Ballanced implements the runtime alias with the same native entry
+        // point. Hooking a function to itself is both unnecessary and rejected
+        // by MinHook on some x86 builds.
+        if (lpCreateCKBehaviorPrototypeRunTimeProc == lpCreateCKBehaviorPrototypeProc) {
+            g_CreateCKBehaviorPrototypeRunTimeEnabled = true;
+            return true;
+        }
 
         if (MH_CreateHook(lpCreateCKBehaviorPrototypeRunTimeProc,
                           lpCreateCKBehaviorPrototypeProc, nullptr) != MH_OK) {

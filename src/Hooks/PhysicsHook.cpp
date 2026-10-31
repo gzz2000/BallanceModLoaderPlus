@@ -7,6 +7,7 @@
 #include "HookUtils.h"
 #include "Loader/ModContext.h"
 
+
 namespace {
 
 class CKIpionManager : public CKBaseManager {
@@ -22,7 +23,6 @@ struct PhysicsHook {
     static CKIpionManager *s_IpionManager;
     static CP_CLASS_VTABLE_NAME(CKIpionManager) s_VTable;
     static VTablePatch s_Patch;
-
     static bool Hook(CKIpionManager *im) {
         if (!im)
             return false;
@@ -30,7 +30,11 @@ struct PhysicsHook {
             return s_IpionManager == im;
 
         const std::size_t postProcessSlot =
+#ifdef _WIN32
             offsetof(CP_CLASS_VTABLE_NAME(CKIpionManager), PostProcess) / sizeof(void *);
+#else
+            utils::VirtualMethodSlot(&CKBaseManager::PostProcess);
+#endif
         const VTablePatch::Request request = {
             postProcessSlot,
             utils::TypeErase(&PhysicsHook::CP_FUNC_HOOK_NAME(PostProcess)),

@@ -235,7 +235,7 @@ void MapListPage::OnSearchMaps() {
         return;
 
     auto *pattern = (OnigUChar *) m_MapSearchBuf;
-    regex_t *reg = nullptr;
+    OnigRegex reg = nullptr;
     OnigErrorInfo einfo;
 
     try {
@@ -301,7 +301,7 @@ void MapListPage::OnSearchMaps() {
         try {
             std::sort(m_MapSearchResult.begin(), m_MapSearchResult.end(), [](const MapEntry *a, const MapEntry *b) {
                 if (a->type != b->type) return a->type < b->type; // MAP_ENTRY_DIR < MAP_ENTRY_FILE
-                return utils::CompareString(a->name, b->name) < 0;
+                return utils::CompareStrings(a->name, b->name) < 0;
             });
         } catch (...) {
             if (ILogger *logger = m_State.GetLogger())
