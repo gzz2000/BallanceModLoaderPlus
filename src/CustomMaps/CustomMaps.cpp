@@ -25,6 +25,30 @@
 #include "PathUtils.h"
 #include "StringUtils.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+namespace {
+CustomMaps *webCustomMaps = nullptr;
+int webMapStatus = 0; // idle, loading, loaded; -1 on failure
+std::string webMapError;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int BML_WebMapLoad(const char *relativePath) {
+    webMapError.clear();
+    if (!webCustomMaps || !relativePath || !*relativePath) {
+        webMapError = "Custom map loader is unavailable";
+        return 0;
+    }
+    webMapStatus = 1;
+    if (!webCustomMaps->LoadFromCommand(relativePath, webMapError)) {
+        webMapStatus = -1;
+        return 0;
+    }
+    return 1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int BML_WebMapStatus() { return webMapStatus; }
+extern "C" EMSCRIPTEN_KEEPALIVE const char *BML_WebMapError() { return webMapError.c_str(); }
+#endif
+
 namespace Behavior = BML::Behavior;
 using CustomMap::LevelLoader;
 
@@ -168,6 +192,11 @@ bool CustomMaps::OnModifyConfig(const char *category, const char *key, IProperty
 void CustomMaps::OnLoad(IBML &bml, ILogger &logger,
                         const std::wstring &gameDirectory, const std::wstring &loaderDirectory,
                         const std::wstring &tempDirectory) {
+#ifdef __EMSCRIPTEN__
+    webCustomMaps = this;
+    webMapStatus = 0;
+    webMapError.clear();
+#endif
     m_BML = &bml;
     m_CKContext = bml.GetCKContext();
     m_Logger = &logger;
@@ -195,6 +224,9 @@ void CustomMaps::OnLoad(IBML &bml, ILogger &logger,
 }
 
 void CustomMaps::OnUnload() {
+#ifdef __EMSCRIPTEN__
+    if (webCustomMaps == this) { webCustomMaps = nullptr; webMapStatus = 0; }
+#endif
     auto restored = RollbackLoad();
     if (!restored && m_Logger) {
         m_Logger->Error(
@@ -644,6 +676,9 @@ void CustomMaps::CompleteLoadSuccess() {
             utils::Utf16ToUtf8(m_LoadAttempt->SourcePath).c_str(),
             m_LoadAttempt->Level);
     }
+#ifdef __EMSCRIPTEN__
+    if (webCustomMaps == this && webMapStatus == 1) webMapStatus = 2;
+#endif
     const bool fromCommand = m_LoadAttempt->Origin == LoadOrigin::Command;
     const std::wstring sourcePath = m_LoadAttempt->SourcePath;
     const std::uint64_t attempt = m_LoadAttempt->Id;
@@ -664,6 +699,12 @@ void CustomMaps::CompleteLoadFailure(const char *reason) {
     if (!m_LoadAttempt)
         return;
 
+#ifdef __EMSCRIPTEN__
+    if (webCustomMaps == this && webMapStatus == 1) {
+        webMapStatus = -1;
+        webMapError = reason ? reason : "Custom map load failed";
+    }
+#endif
     const std::uint64_t attempt = m_LoadAttempt->Id;
     const bool fromCommand = m_LoadAttempt->Origin == LoadOrigin::Command;
     const std::string sourcePath = utils::Utf16ToUtf8(m_LoadAttempt->SourcePath);
