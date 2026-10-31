@@ -76,7 +76,7 @@ public:
     void OnBallNavActive() override;
 
     // Deterministic harness entry points. They run on the game thread and use
-    // exactly the same implementation as the F5/F8 controls.
+    // exactly the same implementation as the configured save/restore controls.
     bool CaptureForAutomation();
     bool RestoreForAutomation();
 
@@ -492,8 +492,8 @@ private:
     IProperty *m_SaveProperty = nullptr;
     IProperty *m_RestoreProperty = nullptr;
     CKKEYBOARD m_FullSpeedKey = CKKEY_TAB;
-    CKKEYBOARD m_SaveKey = CKKEY_F5;
-    CKKEYBOARD m_RestoreKey = CKKEY_F8;
+    CKKEYBOARD m_SaveKey = CKKEY_A;
+    CKKEYBOARD m_RestoreKey = CKKEY_Z;
 
     bool m_FullSpeedActive = false;
     bool m_SaveDown = false;

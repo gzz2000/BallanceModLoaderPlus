@@ -342,11 +342,11 @@ void PracticeTools::OnLoad() {
     m_FullSpeedProperty->SetComment("Hold to temporarily ignore the practice frame cap and run at 264 samples/s.");
 
     m_SaveProperty = config->GetProperty("Keys", "SaveState");
-    m_SaveProperty->SetDefaultKey(CKKEY_F5);
+    m_SaveProperty->SetDefaultKey(CKKEY_A);
     m_SaveProperty->SetComment("Capture the current level state in memory.");
 
     m_RestoreProperty = config->GetProperty("Keys", "RestoreState");
-    m_RestoreProperty->SetDefaultKey(CKKEY_F8);
+    m_RestoreProperty->SetDefaultKey(CKKEY_Z);
     m_RestoreProperty->SetComment("Restore the most recently captured state.");
     RefreshSettings();
     GetLogger()->Info("Practice controls initialized: full-speed=%d save=%d restore=%d input=%p.",

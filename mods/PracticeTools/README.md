@@ -5,8 +5,8 @@ Native macOS practice utilities for Ballanced/BML+.
 - Hold `Tab` to temporarily bypass an explicit practice frame cap and return
   the deterministic scheduler to 264 samples per second. Releasing it restores
   the exact previous frame-limit mode and value.
-- Press `F5` to capture an in-memory state of the current level.
-- Press `F8` to restore the latest state.
+- Press `A` to capture an in-memory state of the current level.
+- Press `Z` to restore the latest state.
 
 The snapshot includes Virtools parameter and fixed-shape data-array values,
 hierarchy-relative 3D entities (including their parent relationships), 2D HUD
