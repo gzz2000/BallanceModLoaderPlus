@@ -8,7 +8,9 @@
 #include <filesystem>
 #include <fstream>
 #include <fnmatch.h>
+#if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#endif
 #include <system_error>
 #include <unistd.h>
 
@@ -85,7 +87,24 @@ std::string MakeRelativePathUtf8(const std::string&p,const std::string&b){std::e
 std::string GetTempPathUtf8(){std::error_code ec;return fs::temp_directory_path(ec).string();} std::string GetTempPathA(){return GetTempPathUtf8();} std::wstring GetTempPathW(){return Utf8ToUtf16(GetTempPathUtf8());}
 std::string GetCurrentDirectoryUtf8(){std::error_code ec;return fs::current_path(ec).string();} std::string GetCurrentDirectoryA(){return GetCurrentDirectoryUtf8();} std::wstring GetCurrentDirectoryW(){return Utf8ToUtf16(GetCurrentDirectoryUtf8());}
 bool SetCurrentDirectoryUtf8(const std::string&p){std::error_code ec;fs::current_path(fs::u8path(p),ec);return !ec;} bool SetCurrentDirectoryA(const std::string&p){return SetCurrentDirectoryUtf8(p);} bool SetCurrentDirectoryW(const std::wstring&p){return SetCurrentDirectoryUtf8(Utf16ToUtf8(p));}
-std::string GetExecutablePathUtf8(){uint32_t n=0;_NSGetExecutablePath(nullptr,&n);std::string b(n,'\0');if(_NSGetExecutablePath(b.data(),&n)!=0)return{};b.resize(std::char_traits<char>::length(b.c_str()));return ResolvePathUtf8(b);} std::string GetExecutablePathA(){return GetExecutablePathUtf8();} std::wstring GetExecutablePathW(){return Utf8ToUtf16(GetExecutablePathUtf8());}
+std::string GetExecutablePathUtf8() {
+#if defined(__APPLE__)
+    uint32_t n = 0;
+    _NSGetExecutablePath(nullptr, &n);
+    std::string path(n, '\0');
+    if (_NSGetExecutablePath(path.data(), &n) != 0) return {};
+    path.resize(std::char_traits<char>::length(path.c_str()));
+    return ResolvePathUtf8(path);
+#elif defined(__EMSCRIPTEN__)
+    // Virtual runtime layout. Mutable data uses BML's configured loader path.
+    return "/Bin/Player";
+#else
+    std::vector<char> path(4096);
+    const auto size = readlink("/proc/self/exe", path.data(), path.size());
+    return size > 0 && static_cast<size_t>(size) < path.size()
+        ? std::string(path.data(), static_cast<size_t>(size)) : std::string();
+#endif
+} std::string GetExecutablePathA(){return GetExecutablePathUtf8();} std::wstring GetExecutablePathW(){return Utf8ToUtf16(GetExecutablePathUtf8());}
 int64_t GetFileSizeUtf8(const std::string&p){std::error_code ec;auto n=fs::file_size(fs::u8path(p),ec);return ec?-1:static_cast<int64_t>(n);} int64_t GetFileSizeA(const std::string&p){return GetFileSizeUtf8(p);} int64_t GetFileSizeW(const std::wstring&p){return GetFileSizeUtf8(Utf16ToUtf8(p));}
 FileTime GetFileTimeUtf8(const std::string&p){std::error_code ec;auto t=fs::last_write_time(fs::u8path(p),ec);if(ec)return{};auto n=std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();return{n,n,n};} FileTime GetFileTimeA(const std::string&p){return GetFileTimeUtf8(p);} FileTime GetFileTimeW(const std::wstring&p){return GetFileTimeUtf8(Utf16ToUtf8(p));}
 

@@ -14,6 +14,10 @@ VTablePatchResult Result(VTablePatchError code,
 }
 
 bool MakeWritable(void *address, std::size_t size) {
+#ifdef __EMSCRIPTEN__
+    // Vtables are ordinary writable linear-memory data, not executable pages.
+    return address && size;
+#else
     const long pageSize = ::sysconf(_SC_PAGESIZE);
     if (!address || !size || pageSize <= 0)
         return false;
@@ -22,9 +26,14 @@ bool MakeWritable(void *address, std::size_t size) {
     const std::uintptr_t end = (reinterpret_cast<std::uintptr_t>(address) + size + mask) & ~mask;
     return ::mprotect(reinterpret_cast<void *>(begin), end - begin,
                       PROT_READ | PROT_WRITE) == 0;
+#endif
 }
 
 bool MakeReadOnly(void *address, std::size_t size) {
+#ifdef __EMSCRIPTEN__
+    // Vtables are ordinary writable linear-memory data, not executable pages.
+    return address && size;
+#else
     const long pageSize = ::sysconf(_SC_PAGESIZE);
     if (!address || !size || pageSize <= 0)
         return false;
@@ -32,6 +41,7 @@ bool MakeReadOnly(void *address, std::size_t size) {
     const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(address) & ~mask;
     const std::uintptr_t end = (reinterpret_cast<std::uintptr_t>(address) + size + mask) & ~mask;
     return ::mprotect(reinterpret_cast<void *>(begin), end - begin, PROT_READ) == 0;
+#endif
 }
 }
 

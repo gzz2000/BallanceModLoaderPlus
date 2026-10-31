@@ -73,6 +73,8 @@ public:
     }
     BML::ModInvocationGate &InvocationGate() { return m_ModInvocationGate; }
 
+    IMod *GetInvocationOwner() const { return ModInvocation::Current(this); }
+
     BMLMod *GetBuiltinMod() const { return m_BMLMod; }
     NewBallTypeMod *GetBallTypeMod() const { return m_BallTypeMod; }
 
@@ -204,6 +206,7 @@ private:
 #endif
     NativeModRegistry m_NativeModRegistry;
     std::vector<std::shared_ptr<void>> m_RejectedNativeDlls;
+    std::unordered_map<IMod *, void (*)(IMod *)> m_StaticModDestructors;
     std::vector<IMod *> m_Mods;
     std::vector<IMod *> m_ActiveMods;
     std::unordered_map<std::string, std::size_t> m_ModIndex;

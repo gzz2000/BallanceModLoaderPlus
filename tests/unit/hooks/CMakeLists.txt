@@ -22,6 +22,11 @@ if (WIN32)
 endif ()
 
 if (NOT WIN32)
+    add_executable(StaticModRegistryTest
+            StaticModRegistryTest.cpp
+            ${BML_SOURCE_DIR}/Loader/StaticModRegistry.cpp)
+    target_include_directories(StaticModRegistryTest PRIVATE ${BML_SOURCE_DIR} ${BML_INCLUDE_DIR})
+    add_test(NAME StaticModRegistryTest COMMAND StaticModRegistryTest)
     add_executable(NativeHookAbiTest
             NativeHookAbiTest.cpp
             ${BML_SOURCE_DIR}/Hooks/VTablePatchPosix.cpp

@@ -766,13 +766,22 @@ else ()
     list(APPEND IMGUI_SOURCES ${IMGUI_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp)
 endif ()
 
-add_library(BML SHARED
+set(_bml_library_type SHARED)
+if (BML_BUILD_STATIC)
+    set(_bml_library_type STATIC)
+endif ()
+add_library(BML ${_bml_library_type}
+        Loader/StaticModRegistry.cpp
         ${BML_SOURCES} ${BML_PUBLIC_HEADERS} ${BML_PRIVATE_HEADERS}
         ${BML_ANGELSCRIPT_PRIVATE_HEADERS}
         ${BML_ANGELSCRIPT_SOURCES}
         ${IMGUI_SOURCES} ${IMGUI_HEADERS}
         ${BML_BUILD_VERSION_HEADER}
 )
+
+if (BML_BUILD_STATIC)
+    target_compile_definitions(BML PRIVATE BML_STATIC_HOST=1)
+endif ()
 
 if (BML_BUILD_UI_AUTOMATION)
     include("${PROJECT_SOURCE_DIR}/tests/ui/PlayerSources.cmake")
@@ -839,6 +848,11 @@ set_target_properties(BML PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+
+# Static BML is currently consumed in-tree with its source dependencies.
+if (BML_BUILD_STATIC)
+    return()
+endif ()
 
 install(TARGETS BML
         EXPORT BMLTargets

@@ -1,4 +1,5 @@
 #include "Loader/ModLoader.h"
+#include "Loader/StaticModRegistry.h"
 #include "Loader/ModContext.h"
 
 #include <algorithm>
@@ -282,6 +283,22 @@ bool ModLoader::LoadMods() {
     try {
         if (!RegisterBuiltinMods())
             return false;
+
+        for (const auto &factory : BML_StaticModFactories()) {
+            IMod *mod = factory.create(&m_Context);
+            if (!mod) return false;
+            try {
+                m_StaticModDestructors.emplace(mod, factory.destroy);
+            } catch (...) {
+                factory.destroy(mod);
+                throw;
+            }
+            if (!RegisterMod(mod)) {
+                m_StaticModDestructors.erase(mod);
+                factory.destroy(mod);
+                return false;
+            }
+        }
 
         for (auto *mod : m_Mods) {
             const char *id = mod->GetID();
@@ -1802,6 +1819,20 @@ std::string ModLoader::GetNativeImcOwnerId(
 
 std::string ModLoader::GetNativeModOwnerId(
     const void *callerAddress, const char *requestedOwnerId) const {
+#if defined(BML_STATIC_HOST)
+    // Static code has no DLL address identity. Attribute calls to the loader's
+    // actual invocation scope, never to an arbitrary caller-supplied mod id.
+    IMod *invoked = ModInvocation::Current(this);
+    if (!invoked) invoked = static_cast<IMod *>(m_BMLMod);
+    std::shared_lock<std::shared_mutex> lock(m_ModRegistryMutex);
+    if (requestedOwnerId && *requestedOwnerId) {
+        IMod *owner = FindModLocked(requestedOwnerId);
+        return owner && owner == invoked ? requestedOwnerId : std::string();
+    }
+    for (const auto &entry : m_ModIndex)
+        if (m_Mods[entry.second] == invoked) return entry.first;
+    return {};
+#else
     if (!callerAddress)
         return {};
 
@@ -1851,6 +1882,7 @@ std::string ModLoader::GetNativeModOwnerId(
     return id == m_ModIndex.end() || id->second >= m_Mods.size()
         ? std::string()
         : id->first;
+#endif
 }
 
 bool ModLoader::NativeModOwnsAddress(
@@ -1915,6 +1947,10 @@ bool ModLoader::UnregisterMod(IMod *mod) {
         }
 
         void *rawDllHandle = ownedDllHandle.get();
+#if defined(BML_STATIC_HOST)
+        if (!m_Context.UnregisterNativeCommands(mod))
+            return false;
+#endif
         if (!m_Context.UnregisterNativeCommands(rawDllHandle))
             return false;
         {
@@ -1952,7 +1988,14 @@ bool ModLoader::UnregisterMod(IMod *mod) {
         }
 
         invocationLock.unlock();
-        DestroyNativeMod(rawDllHandle, mod, modIdCopy.c_str());
+        const auto staticMod = m_StaticModDestructors.find(mod);
+        if (staticMod != m_StaticModDestructors.end()) {
+            auto destroy = staticMod->second;
+            m_StaticModDestructors.erase(staticMod);
+            destroy(mod);
+        } else {
+            DestroyNativeMod(rawDllHandle, mod, modIdCopy.c_str());
+        }
 
         return true;
     } catch (...) {
@@ -2140,9 +2183,17 @@ void ModLoader::FillCallbackMap(IMod *mod) {
     };
 
     int index = 0;
+#ifdef _WIN32
+#define CALLBACK_SLOT(IDX, FUNC) (IDX)
+#else
+    // Itanium targets have two destructor entries; WASM can also merge empty
+    // methods with matching signatures. Inspect the actual virtual slot rather
+    // than comparing the neighbouring method in the Win32 layout.
+#define CALLBACK_SLOT(IDX, FUNC) ((void)(IDX), utils::VirtualMethodSlot(FUNC))
+#endif
 #define CHECK_V_FUNC(IDX, FUNC)                             \
     do {                                                    \
-        auto idx = IDX;                                     \
+        auto idx = CALLBACK_SLOT(IDX, FUNC);                \
         if (vtable[0][idx] != vtable[1][idx])               \
             m_CallbackMap[utils::TypeErase(FUNC)].push_back(mod);  \
     } while(0)
@@ -2199,4 +2250,5 @@ void ModLoader::FillCallbackMap(IMod *mod) {
     CHECK_V_FUNC(index++, &IMod::OnPostCommandExecute);
 
 #undef CHECK_V_FUNC
+#undef CALLBACK_SLOT
 }

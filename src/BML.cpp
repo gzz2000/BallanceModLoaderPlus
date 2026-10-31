@@ -1,4 +1,9 @@
-﻿#if defined(_WIN32)
+#if defined(BML_STATIC_HOST)
+#define CKGetPluginInfoCount BML_Static_GetPluginInfoCount
+#define CKGetPluginInfo BML_Static_GetPluginInfo
+#define RegisterBehaviorDeclarations BML_Static_RegisterBehaviorDeclarations
+#endif
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -38,7 +43,7 @@ PLUGIN_EXPORT CKERROR BML_CompletePlayerStepV1(CKContext *context) {
     return manager ? manager->CompletePlayerStep() : CKERR_NOTINITIALIZED;
 }
 
-CKPluginInfo g_PluginInfo[2];
+static CKPluginInfo g_PluginInfo[2];
 
 static bool EnsureProcessHooks();
 static CKERROR RetainProcessHooks(CKContext *context);

@@ -32,6 +32,20 @@ struct Hook {
     }
 };
 
+// Adjacent empty callbacks may merge in WASM, but an override must still be
+// detected at its own slot, including the ABI's destructor entries.
+struct Callbacks {
+    virtual ~Callbacks() = default;
+    virtual void Load() {}
+    virtual void Render(int) {}
+    virtual void Physicalize(void *, float) {}
+    virtual void Unphysicalize(void *) {}
+};
+struct PhysicsCallbacks : Callbacks {
+    void Physicalize(void *, float) override { ++calls; }
+    void Unphysicalize(void *) override { ++calls; }
+};
+
 // Keep the test's dispatch virtual even when the optimizer knows the concrete
 // instance at the call site; no LTO is used by the standalone sanitizer run.
 __attribute__((noinline)) int Dispatch(Manager *manager, int amount) {
@@ -40,6 +54,16 @@ __attribute__((noinline)) int Dispatch(Manager *manager, int amount) {
 }
 
 int main() {
+    Callbacks blank;
+    PhysicsCallbacks physics;
+    auto **base = utils::GetVTable(&blank);
+    auto **derived = utils::GetVTable(&physics);
+    Check(base[utils::VirtualMethodSlot(&Callbacks::Load)] ==
+          derived[utils::VirtualMethodSlot(&Callbacks::Load)], "inherited callback excluded");
+    Check(base[utils::VirtualMethodSlot(&Callbacks::Physicalize)] !=
+          derived[utils::VirtualMethodSlot(&Callbacks::Physicalize)], "physicalize override discovered");
+    Check(base[utils::VirtualMethodSlot(&Callbacks::Unphysicalize)] !=
+          derived[utils::VirtualMethodSlot(&Callbacks::Unphysicalize)], "unphysicalize override discovered");
     Check(utils::VirtualMethodSlot(&CKBaseManager::PostProcess) == 7,
           "native PostProcess slot must include both destructor entries");
     Check(utils::VirtualMethodSlot(&CKBaseManager::OnCKInit) == 12,

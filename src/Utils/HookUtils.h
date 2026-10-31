@@ -44,8 +44,8 @@ namespace utils {
         struct Encoding { std::ptrdiff_t pointer; std::ptrdiff_t adjustment; } value{};
         static_assert(sizeof(method) == sizeof(value), "Unsupported member-pointer ABI");
         std::memcpy(&value, &method, sizeof(value));
-#if defined(__arm__) || defined(__aarch64__) || defined(__arm64__)
-        assert(value.adjustment == 1); // ARM puts the virtual bit in adjustment.
+#if defined(__arm__) || defined(__aarch64__) || defined(__arm64__) || defined(__wasm__)
+        assert(value.adjustment == 1); // ARM and WASM put the virtual bit in adjustment.
         const auto offset = value.pointer;
 #else
         assert((value.pointer & 1) && value.adjustment == 0);

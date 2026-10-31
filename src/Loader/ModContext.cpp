@@ -648,7 +648,10 @@ BML::Behavior::Internal::Status ModContext::RetireBehaviorOwner(
 void ModContext::RegisterCommand(ICommand *cmd) {
     // Taken before the lock: this is a virtual the Mod calls across the DLL
     // boundary, so the return address is in whichever module is registering.
-#if defined(_WIN32)
+#if defined(BML_STATIC_HOST)
+    const void *const registrar = m_Loader.GetInvocationOwner()
+        ? static_cast<const void *>(m_Loader.GetInvocationOwner()) : this;
+#elif defined(_WIN32)
     void *const registrar =
         reinterpret_cast<void *>(ModuleFromAddress(_ReturnAddress()));
 #else
@@ -764,7 +767,12 @@ int ModContext::UnregisterCommand(const void *callerAddress, const char *name) {
     if (!IsMainThread())
         return BML_ERROR_WRONG_THREAD;
 
+#if defined(BML_STATIC_HOST)
+    const void *const caller = m_Loader.GetInvocationOwner()
+        ? static_cast<const void *>(m_Loader.GetInvocationOwner()) : this;
+#else
     void *const caller = ModuleFromAddress(callerAddress);
+#endif
 
     switch (UnregisterOwnedCommand(caller, name)) {
         case BML::CommandContext::UnregisterResult::Success:

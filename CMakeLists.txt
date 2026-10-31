@@ -58,7 +58,10 @@ add_compile_options(
 
 include(CMakeDependentOption)
 
+option(BML_BUILD_STATIC "Link BML into a source-integrated host" OFF)
+
 option(BML_BUILD_TESTS "Build the BML test suite" OFF)
+option(BML_BUILD_HOST_TESTS "Build standalone host ABI/static registry tests" OFF)
 option(BML_BUILD_BENCHMARKS "Build standalone BML microbenchmarks" OFF)
 cmake_dependent_option(
         BML_ENABLE_BEHAVIOR_TEST_INTERFACE
@@ -99,6 +102,10 @@ if (BML_BALLANCED_ROOT AND EXISTS "${BML_BALLANCED_ROOT}/Source/CK2/include/CKAl
             "${BML_BALLANCED_ROOT}/Source/VxMath/include")
     foreach (_bml_sdk_library IN ITEMS CK2 VxMath)
         if (NOT TARGET VirtoolsSDK::${_bml_sdk_library})
+            if (BML_BUILD_STATIC AND TARGET ${_bml_sdk_library}Static)
+                add_library(VirtoolsSDK::${_bml_sdk_library} ALIAS ${_bml_sdk_library}Static)
+                continue()
+            endif ()
             add_library(VirtoolsSDK::${_bml_sdk_library} SHARED IMPORTED)
             if (WIN32)
                 set_target_properties(VirtoolsSDK::${_bml_sdk_library} PROPERTIES
@@ -197,4 +204,7 @@ if (BML_BUILD_BENCHMARKS)
 endif ()
 if (BML_BUILD_TESTS)
     add_subdirectory(tests)
+elseif (BML_BUILD_HOST_TESTS AND NOT WIN32)
+    enable_testing()
+    add_subdirectory(tests/unit/hooks)
 endif ()
