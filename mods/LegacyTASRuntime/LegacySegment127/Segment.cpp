@@ -144,7 +144,11 @@ void Segment::OnLoad() {
 	GetConfig()->SetCategoryComment("General", "General Settings");
 	props_[0] = GetConfig()->GetProperty("General", "Enabled?");
 	props_[0]->SetComment("Enable Segment");
+	#ifdef __EMSCRIPTEN__
+	props_[0]->SetDefaultBoolean(false);
+#else
 	props_[0]->SetDefaultBoolean(true);
+#endif
 
 	GetConfig()->SetCategoryComment("Tweaking", "Performance Tweaking");
 	props_[1] = GetConfig()->GetProperty("Tweaking", "SkipFrames?");
