@@ -5,7 +5,7 @@
 #include <deque>
 
 namespace {
-struct Entry { std::string name; BMLStaticModFactory factory; };
+struct Entry { std::string name; BMLStaticModFactory factory; std::string dataPath; };
 std::deque<Entry> entries;
 std::mutex mutex;
 }
@@ -16,9 +16,11 @@ bool BML_RegisterStaticModFactory(const BMLStaticModFactory &factory) {
     std::lock_guard<std::mutex> lock(mutex);
     for (const auto &entry : entries)
         if (entry.name == factory.name)
-            return entry.factory.create == factory.create && entry.factory.destroy == factory.destroy;
-    entries.push_back({factory.name, factory});
+            return entry.factory.create == factory.create && entry.factory.destroy == factory.destroy
+                && entry.dataPath == (factory.dataPath ? factory.dataPath : "");
+    entries.push_back({factory.name, factory, factory.dataPath ? factory.dataPath : ""});
     entries.back().factory.name = entries.back().name.c_str();
+    entries.back().factory.dataPath = entries.back().dataPath.empty() ? nullptr : entries.back().dataPath.c_str();
     return true;
 }
 

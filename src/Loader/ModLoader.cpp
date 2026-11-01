@@ -298,6 +298,8 @@ bool ModLoader::LoadMods() {
                 factory.destroy(mod);
                 return false;
             }
+            if (factory.dataPath && *factory.dataPath)
+                m_Context.AddDataPath(factory.dataPath);
         }
 
         for (auto *mod : m_Mods) {
@@ -359,7 +361,7 @@ bool ModLoader::LoadMods() {
                 && scriptModCandidates.empty()
 #endif
             ) {
-                m_Context.GetLogger()->Info("No mod is found.");
+                m_Context.GetLogger()->Info("No additional native Mod files found.");
             }
         }
 
