@@ -1828,7 +1828,21 @@ bool PracticeTools::RestoreState() {
     for (const auto &state : m_Snapshot->parameters) {
         if (PracticeTimeline::RestoreParameterReferences(
                 CKParameter::Cast(resolve(state.id)), state.references, resolve) != CK_OK) {
-            GetLogger()->Warn("Typed reference restore failed: id=%u kind=%d.", unsigned(state.id), int(state.references.kind));
+            GetLogger()->Warn("Typed reference restore failed: id=%u kind=%d saved-type=%08x:%08x.",
+                unsigned(state.id), int(state.references.kind),
+                unsigned(state.references.guid.d1), unsigned(state.references.guid.d2));
+            auto *failed = CKParameter::Cast(resolve(state.id));
+            GetLogger()->Warn("Reference parameter: live=%p type=%d name=%s owner=%s.",
+                static_cast<void *>(failed), failed ? failed->GetType() : -1,
+                failed && failed->GetName() ? failed->GetName() : "<missing>",
+                failed && failed->GetOwner() && failed->GetOwner()->GetName() ? failed->GetOwner()->GetName() : "<none>");
+            for (CK_ID target : state.references.targets) {
+                auto *live = target ? resolve(target) : nullptr;
+                auto *desc = failed ? m_Context->GetParameterManager()->GetParameterTypeDescription(failed->GetType()) : nullptr;
+                GetLogger()->Warn("Reference target: saved=%u live=%p class=%d expected=%d name=%s.",
+                    unsigned(target), static_cast<void *>(live), live ? int(live->GetClassID()) : -1,
+                    desc ? int(desc->Cid) : -1, live && live->GetName() ? live->GetName() : "<missing>");
+            }
             m_BML->SendIngameMessage("Unable to restore typed parameter references");
             return false;
         }
