@@ -35,6 +35,34 @@ namespace Ui = BML::UI;
 namespace Behavior = BML::Behavior;
 
 namespace {
+#ifdef __EMSCRIPTEN__
+// The Graphics script is loaded from Menu.nmo after Player's base.cmo hotfixes.
+// Its two dimension formatters need a name for the browser's 0x0 Auto sentinel.
+CKBEHAVIORFCT webResolutionFormatter = nullptr;
+int FormatWebResolution(const CKBehaviorContext &bc) {
+    const int result = webResolutionFormatter(bc);
+    int width = -1, height = -1;
+    bc.Behavior->GetInputParameterValue(1, &width);
+    bc.Behavior->GetInputParameterValue(2, &height);
+    if (width == 0 && height == 0)
+        bc.Behavior->SetOutputParameterValue(0, "Auto", 5);
+    return result;
+}
+void PatchWebResolutionLabels(CKBehavior *menu) {
+    for (int i = 0; i < menu->GetSubBehaviorCount(); ++i) {
+        auto *group = menu->GetSubBehavior(i);
+        if (strcmp(group->GetName(), "Init") && strcmp(group->GetName(), "Resolution")) continue;
+        for (int j = 0; j < group->GetSubBehaviorCount(); ++j) {
+            auto *format = group->GetSubBehavior(j);
+            if (!strcmp(format->GetName(), "Create String") && format->GetFunction() != FormatWebResolution) {
+                webResolutionFormatter = format->GetFunction();
+                format->SetFunction(FormatWebResolution);
+            }
+        }
+    }
+}
+#endif
+
 constexpr std::size_t GameFontRoleCount = static_cast<std::size_t>(BML::GameFont::Count);
 constexpr CKDWORD GameFontAcquireDelay = 1;
 
@@ -259,6 +287,10 @@ void BMLMod::OnLoadObject(const char *filename, CKBOOL isMap, const char *master
 
 void BMLMod::OnLoadScript(const char *filename, CKBehavior *script) {
     m_CustomMaps.OnLoadScript(script);
+#ifdef __EMSCRIPTEN__
+    if (!strcmp(script->GetName(), "Menu_Opt_Graphics"))
+        PatchWebResolutionLabels(script);
+#endif
 
     if (!strcmp(script->GetName(), "Menu_Init"))
         OnEditScript_Menu_MenuInit(script);
