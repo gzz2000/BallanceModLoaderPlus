@@ -1,9 +1,25 @@
 #include "DebugCommands.h"
 #include "DebugUtilities.h"
+#include <cstdlib>
+#include <climits>
+#include <cfloat>
+
+namespace {
+// strtol/strtod belong to the frozen WASM ABI; atoi/atof do not. Keep the
+// original command semantics (including non-numeric -> zero and clamping).
+int DebugInteger(const std::string &text, int low = INT_MIN, int high = INT_MAX) {
+    return static_cast<int>((std::max)(static_cast<long>(low),
+        (std::min)(static_cast<long>(high), std::strtol(text.c_str(), nullptr, 10))));
+}
+float DebugFloat(const std::string &text, float low, float high) {
+    return (std::max)(low, (std::min)(high, static_cast<float>(std::strtod(text.c_str(), nullptr))));
+}
+}
+
 
 void CommandScore::Execute(IBML *bml, const std::vector<std::string> &args) {
     if (bml->IsIngame() && args.size() > 2) {
-        int num = ParseInteger(args[2], 0);
+        int num = DebugInteger(args[2], 0);
         if (!m_Energy) {
             m_Energy = bml->GetArrayByName("Energy");
         }
@@ -60,7 +76,7 @@ void CommandSetSpawn::Execute(IBML *bml, const std::vector<std::string> &args) {
 
 void CommandSector::Execute(IBML *bml, const std::vector<std::string> &args) {
     if (args.size() == 2) {
-        int sector = ParseInteger(args[1], 1, m_Mod->GetSectorCount() + 1);
+        int sector = DebugInteger(args[1], 1, m_Mod->GetSectorCount() + 1);
         m_Mod->SetSector(sector);
     }
 }
@@ -77,7 +93,7 @@ void CommandWin::Execute(IBML *bml, const std::vector<std::string> &args) {
 
 void CommandSpeed::Execute(IBML *bml, const std::vector<std::string> &args) {
     if (args.size() > 1) {
-        float times = ParseFloat(args[1], 0, 1000);
+        float times = DebugFloat(args[1], 0, 1000);
         m_Mod->ChangeBallSpeed(times);
     }
 }

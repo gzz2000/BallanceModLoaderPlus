@@ -14,13 +14,23 @@ public:
     explicit DebugUtilities(IBML *bml) : IMod(bml) {}
 
     const char *GetID() override { return "DebugUtilities"; }
-    const char *GetVersion() override { return "0.3.2"; }
+    const char *GetVersion() override {
+#ifdef __EMSCRIPTEN__
+        return "0.3.2-web.1";
+#else
+        return "0.3.2";
+#endif
+    }
     const char *GetName() override { return "Debug Utilities"; }
     const char *GetAuthor() override { return "Gamepiaynmo & Kakuty"; }
     const char *GetDescription() override { return "Ballance Debug Utilities."; }
     DECLARE_BML_VERSION;
 
     void OnLoad() override;
+    void OnUnload() override;
+#ifdef __EMSCRIPTEN__
+    const char *WebStatus();
+#endif
     void OnModifyConfig(const char *category, const char *key, IProperty *prop) override;
     void OnLoadObject(const char *filename, CKBOOL isMap, const char *masterName, CK_CLASSID filterClass,
                       CKBOOL addToScene, CKBOOL reuseMeshes, CKBOOL reuseMaterials, CKBOOL dynamic,
@@ -112,6 +122,6 @@ private:
     int m_CurSel = -1;
     CK3dEntity *m_CurObj = nullptr;
     CK3dEntity *m_Balls[4] = {};
-    std::vector<std::pair<int, CK3dEntity *>> m_TempBalls;
+
     IProperty *m_MoveKeys[6] = {};
 };

@@ -1,13 +1,38 @@
 #include "DebugUtilities.h"
 #include "DebugCommands.h"
 
+#include <cstdio>
+
 using namespace ScriptHelper;
 
+static DebugUtilities *activeMod = nullptr;
+
+namespace {
+std::string ArrayString(CKDataArray *array, int row, int column) {
+#if defined(__EMSCRIPTEN__) || defined(BML_NATIVE_BALLANCED)
+    const int size = array->GetElementStringValue(row, column, nullptr, 0);
+    if (size <= 0) return {};
+    std::string value(size, '\0');
+    array->GetElementStringValue(row, column, value.data(), size);
+#else
+    const int size = array->GetElementStringValue(row, column, nullptr);
+    if (size <= 0) return {};
+    std::string value(size, '\0');
+    array->GetElementStringValue(row, column, value.data());
+#endif
+    if (!value.empty() && value.back() == '\0') value.pop_back();
+    return value;
+}
+}
+
+
 IMod *BMLEntry(IBML *bml) {
-    return new DebugUtilities(bml);
+    activeMod = new DebugUtilities(bml);
+    return activeMod;
 }
 
 void BMLExit(IMod *mod) {
+    if (mod == activeMod) activeMod = nullptr;
     delete mod;
 }
 
@@ -160,18 +185,53 @@ void DebugUtilities::OnLoad() {
     m_InputHook = m_BML->GetInputManager();
 }
 
+void DebugUtilities::OnUnload() {
+    GetLogger()->Info("DebugUtilities unloaded");
+}
+
+#ifdef __EMSCRIPTEN__
+const char *DebugUtilities::WebStatus() {
+    static std::string result;
+    auto *level = m_BML->GetArrayByName("CurrentLevel");
+    auto *energy = m_BML->GetArrayByName("Energy");
+    auto *ph = m_BML->GetArrayByName("PH");
+    auto *ball = level ? static_cast<CK3dEntity *>(level->GetElementObject(0, 1)) : nullptr;
+    VxVector pos{}; if (ball) ball->GetPosition(&pos);
+    int score = 0, lives = 0, sector = 0;
+    if (energy) { energy->GetElementValue(0, 0, &score); energy->GetElementValue(0, 1, &lives); }
+    if (m_CurSector) sector = ScriptHelper::GetParamValue<int>(m_CurSector);
+    size_t summoned = 0;
+    if (ph) for (int row = 0; row < ph->GetRowCount(); ++row) {
+        CKObject *object = ph->GetElementObject(row, 3);
+        if (object && std::string(object->GetName()).starts_with("DebugUtilities_Summoned_")) ++summoned;
+    }
+    char buffer[768];
+    std::snprintf(buffer, sizeof(buffer),
+        "{\"playing\":%s,\"cheat\":%s,\"score\":%d,\"lives\":%d,\"sector\":%d,\"sectorCount\":%d,\"force\":%.9g,\"speed\":%.9g,\"ballType\":\"%s\",\"ball\":[%.9g,%.9g,%.9g],\"phRows\":%d,\"summoned\":%zu,\"preview\":%d,\"skipRender\":%s}",
+        m_BML->IsPlaying() ? "true" : "false", m_BML->IsCheatEnabled() ? "true" : "false",
+        score, lives, sector, GetSectorCount(), m_Force ? ScriptHelper::GetParamValue<float>(m_Force) : 0.0f,
+        m_SpeedTimes, ball ? ball->GetName() : "", pos.x, pos.y, pos.z,
+        ph ? ph->GetRowCount() : 0, summoned, m_CurSel, m_SkipRender ? "true" : "false");
+    result = buffer;
+    return result.c_str();
+}
+MOD_EXPORT const char *BML_WebDebugUtilitiesStatus() { return activeMod ? activeMod->WebStatus() : "{}"; }
+#endif
+
 void DebugUtilities::OnModifyConfig(const char *category, const char *key, IProperty *prop) {
     if (m_BML->IsCheatEnabled()) {
-        if (prop == m_BallCheat[0])
+        if (prop == m_BallCheat[0] && m_BallForce[0])
             SetParamValue(m_BallForce[0], m_BallCheat[0]->GetKey());
-        if (prop == m_BallCheat[1])
+        if (prop == m_BallCheat[1] && m_BallForce[1])
             SetParamValue(m_BallForce[1], m_BallCheat[1]->GetKey());
     }
 }
 
 void DebugUtilities::OnLoadObject(const char *filename, CKBOOL isMap, const char *masterName, CK_CLASSID filterClass, CKBOOL addToScene, CKBOOL reuseMeshes,
                             CKBOOL reuseMaterials, CKBOOL dynamic, XObjectArray *objArray, CKObject *masterObj) {
-    if (!strcmp(filename, "3D Entities\\Camera.nmo")) {
+    std::string path = filename ? filename : "";
+    std::replace(path.begin(), path.end(), '\\', '/');
+    if (path == "3D Entities/Camera.nmo" || path.ends_with("/3D Entities/Camera.nmo")) {
         m_CamOrientRef = m_BML->Get3dEntityByName("Cam_OrientRef");
         m_CamTarget = m_BML->Get3dEntityByName("Cam_Target");
     }
@@ -205,14 +265,14 @@ void DebugUtilities::OnProcess() {
 
 void DebugUtilities::OnCheatEnabled(bool enable) {
     if (enable) {
-        SetParamValue(m_BallForce[0], m_BallCheat[0]->GetKey());
-        SetParamValue(m_BallForce[1], m_BallCheat[1]->GetKey());
+        if (m_BallForce[0]) SetParamValue(m_BallForce[0], m_BallCheat[0]->GetKey());
+        if (m_BallForce[1]) SetParamValue(m_BallForce[1], m_BallCheat[1]->GetKey());
     } else {
         if (abs(m_SpeedTimes - 1.0f) > EPSILON)
             ChangeBallSpeed(1.0f);
 
-        SetParamValue(m_BallForce[0], CKKEYBOARD(0));
-        SetParamValue(m_BallForce[1], CKKEYBOARD(0));
+        if (m_BallForce[0]) SetParamValue(m_BallForce[0], CKKEYBOARD(0));
+        if (m_BallForce[1]) SetParamValue(m_BallForce[1], CKKEYBOARD(0));
     }
 }
 
@@ -226,12 +286,17 @@ void DebugUtilities::OnPreResetLevel() {
 }
 
 void DebugUtilities::OnPostResetLevel() {
+    // A world restore can remove/recreate temporary objects and reorder PH.
+    // Resolve owned objects from the current array rather than cached pointers
+    // and row indices from a previous timeline.
     CKDataArray *ph = m_BML->GetArrayByName("PH");
-    for (auto iter = m_TempBalls.rbegin(); iter != m_TempBalls.rend(); iter++) {
-        ph->RemoveRow(iter->first);
-        m_BML->GetCKContext()->DestroyObject(iter->second);
+    if (ph) for (int row = ph->GetRowCount() - 1; row >= 0; --row) {
+        CKObject *object = ph->GetElementObject(row, 3);
+        if (object && std::string(object->GetName()).starts_with("DebugUtilities_Summoned_")) {
+            ph->RemoveRow(row);
+            m_BML->GetCKContext()->DestroyObject(object);
+        }
     }
-    m_TempBalls.clear();
 }
 
 void DebugUtilities::OnPauseLevel() {
@@ -277,9 +342,7 @@ void DebugUtilities::ChangeBallSpeed(float times) {
             m_Force = ScriptHelper::FindFirstBB(ingame, "Ball Navigation")->GetInputParameter(0)->GetRealSource();
 
             for (int i = 0; i < m_PhysicsBall->GetRowCount(); i++) {
-                std::string ballName(m_PhysicsBall->GetElementStringValue(i, 0, nullptr), '\0');
-                m_PhysicsBall->GetElementStringValue(i, 0, &ballName[0]);
-                ballName.pop_back();
+                std::string ballName = ArrayString(m_PhysicsBall, i, 0);
                 float force;
                 m_PhysicsBall->GetElementValue(i, 7, &force);
                 m_Forces[ballName] = force;
@@ -300,9 +363,7 @@ void DebugUtilities::ChangeBallSpeed(float times) {
             }
 
             for (int i = 0; i < m_PhysicsBall->GetRowCount(); i++) {
-                std::string ballName(m_PhysicsBall->GetElementStringValue(i, 0, nullptr), '\0');
-                m_PhysicsBall->GetElementStringValue(i, 0, &ballName[0]);
-                ballName.pop_back();
+                std::string ballName = ArrayString(m_PhysicsBall, i, 0);
                 auto iter = m_Forces.find(ballName);
                 if (iter != m_Forces.end()) {
                     float force = iter->second;
@@ -326,7 +387,7 @@ void DebugUtilities::ResetBall() {
     mm->SendMessageSingle(ballDeactivate, m_BML->GetGroupByName("All_Gameplay"));
     mm->SendMessageSingle(ballDeactivate, m_BML->GetGroupByName("All_Sound"));
 
-    m_BML->AddTimer(2ul, [this]() {
+    m_BML->AddTimer(static_cast<CKDWORD>(2), [this]() {
         auto *curBall = (CK3dEntity *) m_CurLevel->GetElementObject(0, 1);
         if (curBall) {
             ExecuteBB::Unphysicalize(curBall);
@@ -334,7 +395,7 @@ void DebugUtilities::ResetBall() {
             m_DynamicPos->ActivateInput(1);
             m_DynamicPos->Activate();
 
-            m_BML->AddTimer(1ul, [this, curBall]() {
+            m_BML->AddTimer(static_cast<CKDWORD>(1), [this, curBall]() {
                 VxMatrix matrix;
                 m_CurLevel->GetElementValue(0, 3, &matrix);
                 curBall->SetWorldMatrix(matrix);
@@ -343,7 +404,7 @@ void DebugUtilities::ResetBall() {
                 m_BML->RestoreIC(camMF, true);
                 camMF->SetWorldMatrix(matrix);
 
-                m_BML->AddTimer(1ul, [this]() {
+                m_BML->AddTimer(static_cast<CKDWORD>(1), [this]() {
                     m_DynamicPos->ActivateInput(0);
                     m_DynamicPos->Activate();
                     m_PhysicsNewBall->ActivateInput(0);
@@ -368,7 +429,8 @@ void DebugUtilities::SetSector(int sector) {
         CKDataArray *checkPoints = m_BML->GetArrayByName("Checkpoints");
         CKDataArray *resetPoints = m_BML->GetArrayByName("ResetPoints");
 
-        if (sector < 1 || sector > checkPoints->GetRowCount() + 1)
+        if (!checkPoints || !resetPoints || sector < 1 || sector > checkPoints->GetRowCount() + 1
+            || sector > resetPoints->GetRowCount())
             return;
 
         int curSector = ScriptHelper::GetParamValue<int>(m_CurSector);
@@ -386,22 +448,28 @@ void DebugUtilities::SetSector(int sector) {
             CKBehavior *sectorMgr = m_BML->GetScriptByName("Gameplay_SectorManager");
             m_CKContext->GetCurrentScene()->Activate(sectorMgr, true);
 
-            m_BML->AddTimerLoop(1ul, [this, sector, checkPoints, sectorMgr]() {
+            m_BML->AddTimerLoop(static_cast<CKDWORD>(1), [this, sector, checkPoints, sectorMgr]() {
                 if (sectorMgr->IsActive())
                     return true;
 
-                m_BML->AddTimer(2ul, [this, checkPoints, sector]() {
+                m_BML->AddTimer(static_cast<CKDWORD>(2), [this, checkPoints, sector]() {
                     CKBOOL active = false;
                     m_CurLevel->SetElementValue(0, 4, &active);
 
-                    CK_ID flameId;
-                    checkPoints->GetElementValue(sector % 2, 1, &flameId);
-                    auto *flame = (CK3dEntity *) m_CKContext->GetObject(flameId);
-                    m_CKContext->GetCurrentScene()->Activate(flame->GetScript(0), true);
-
-                    checkPoints->GetElementValue(sector - 1, 1, &flameId);
-                    flame = (CK3dEntity *) m_CKContext->GetObject(flameId);
-                    m_CKContext->GetCurrentScene()->Activate(flame->GetScript(0), true);
+                    // The final sector has a reset point but no next checkpoint.
+                    // Never read a nonexistent row or dereference a missing flame
+                    // (custom maps may also have fewer than two checkpoint rows).
+                    auto activateFlame = [this, checkPoints](int row) -> CK3dEntity * {
+                        if (row < 0 || row >= checkPoints->GetRowCount()) return nullptr;
+                        CK_ID id = 0;
+                        checkPoints->GetElementValue(row, 1, &id);
+                        auto *object = static_cast<CK3dEntity *>(m_CKContext->GetObject(id));
+                        if (object && object->GetScript(0))
+                            m_CKContext->GetCurrentScene()->Activate(object->GetScript(0), true);
+                        return object;
+                    };
+                    activateFlame(sector % 2);
+                    auto *flame = activateFlame(sector - 1);
 
                     if (sector > checkPoints->GetRowCount()) {
                         CKMessageManager *mm = m_BML->GetMessageManager();
@@ -409,8 +477,10 @@ void DebugUtilities::SetSector(int sector) {
                         mm->SendMessageSingle(msg, m_BML->GetGroupByName("All_Sound"));
 
                         ResetBall();
+                    } else if (!flame) {
+                        ResetBall();
                     } else {
-                        m_BML->AddTimer(2ul, [this, sector, checkPoints, flame]() {
+                        m_BML->AddTimer(static_cast<CKDWORD>(2), [this, sector, checkPoints, flame]() {
                             VxMatrix matrix;
                             checkPoints->GetElementValue(sector - 1, 0, &matrix);
                             flame->SetWorldMatrix(matrix);
@@ -535,7 +605,7 @@ void DebugUtilities::OnProcess_ResetBall() {
         mm->SendMessageSingle(ballDeactivate, m_BML->GetGroupByName("All_Gameplay"));
         mm->SendMessageSingle(ballDeactivate, m_BML->GetGroupByName("All_Sound"));
 
-        m_BML->AddTimer(2ul, [this]() {
+        m_BML->AddTimer(static_cast<CKDWORD>(2), [this]() {
             auto *curBall = (CK3dEntity *) m_CurLevel->GetElementObject(0, 1);
             if (curBall) {
                 ExecuteBB::Unphysicalize(curBall);
@@ -543,9 +613,7 @@ void DebugUtilities::OnProcess_ResetBall() {
                 CKDataArray *ph = m_BML->GetArrayByName("PH");
                 for (int i = 0; i < ph->GetRowCount(); i++) {
                     CKBOOL set = true;
-                    char name[100];
-                    ph->GetElementStringValue(i, 1, name);
-                    if (!strcmp(name, "P_Extra_Point"))
+                    if (ArrayString(ph, i, 1) == "P_Extra_Point")
                         ph->SetElementValue(i, 4, &set);
                 }
 
@@ -554,14 +622,14 @@ void DebugUtilities::OnProcess_ResetBall() {
                 CKBehavior *sectorMgr = m_BML->GetScriptByName("Gameplay_SectorManager");
                 m_BML->GetCKContext()->GetCurrentScene()->Activate(sectorMgr, true);
 
-                m_BML->AddTimerLoop(1ul, [this, curBall, sectorMgr]() {
+                m_BML->AddTimerLoop(static_cast<CKDWORD>(1), [this, curBall, sectorMgr]() {
                     if (sectorMgr->IsActive())
                         return true;
 
                     m_DynamicPos->ActivateInput(1);
                     m_DynamicPos->Activate();
 
-                    m_BML->AddTimer(1ul, [this, curBall]() {
+                    m_BML->AddTimer(static_cast<CKDWORD>(1), [this, curBall]() {
                         VxMatrix matrix;
                         m_CurLevel->GetElementValue(0, 3, &matrix);
                         curBall->SetWorldMatrix(matrix);
@@ -570,7 +638,7 @@ void DebugUtilities::OnProcess_ResetBall() {
                         m_BML->RestoreIC(camMF, true);
                         camMF->SetWorldMatrix(matrix);
 
-                        m_BML->AddTimer(1ul, [this]() {
+                        m_BML->AddTimer(static_cast<CKDWORD>(1), [this]() {
                             m_DynamicPos->ActivateInput(0);
                             m_DynamicPos->Activate();
 
@@ -611,7 +679,9 @@ void DebugUtilities::OnProcess_AddLife() {
 }
 
 void DebugUtilities::OnProcess_SkipRender() {
-    m_SkipRender = (m_BML->IsCheatEnabled() && m_InputHook->IsKeyDown(m_SkipRenderKey->GetKey()));
+    const bool skip = m_BML->IsCheatEnabled() && m_InputHook->IsKeyDown(m_SkipRenderKey->GetKey());
+    if (skip == m_SkipRender) return;
+    m_SkipRender = skip;
     if (m_SkipRender)
         m_RenderContext->ChangeCurrentRenderOptions(0, CK_RENDER_DEFAULTSETTINGS);
     else
@@ -630,7 +700,16 @@ void DebugUtilities::OnProcess_Summon() {
         }
 
         if (m_CurSel >= 0) {
+            if (!m_Balls[m_CurSel] || !m_CamTarget || !m_CamOrientRef) {
+                m_CurSel = -1;
+                m_InputHook->SetBlock(false);
+                m_BML->SendIngameMessage("Auxiliary object or camera is unavailable.");
+                return;
+            }
             m_CurObj = (CK3dEntity *) m_BML->GetCKContext()->CopyObject(m_Balls[m_CurSel]);
+            if (!m_CurObj) { m_CurSel = -1; m_InputHook->SetBlock(false); return; }
+            const std::string name = "DebugUtilities_Summoned_" + std::to_string(m_CurObj->GetID());
+            m_CurObj->SetName(name.c_str());
             vector = VxVector(0, 5, 0);
             m_CurObj->SetPosition(&vector, m_CamTarget);
             m_CurObj->Show();
@@ -691,12 +770,11 @@ void DebugUtilities::OnProcess_Summon() {
 
         CKGroup *depth = m_BML->GetGroupByName("DepthTest");
         depth->AddObject(m_CurObj);
-        m_TempBalls.emplace_back(index, m_CurObj);
 
+        static const char *names[] = {"Paper Ball", "Wood Ball", "Stone Ball", "Box"};
+        GetLogger()->Info("Summoned a %s", names[m_CurSel]);
         m_CurSel = -1;
         m_CurObj = nullptr;
         m_InputHook->SetBlock(false);
-
-        GetLogger()->Info("Summoned a %s", m_CurSel < 2 ? m_CurSel == 0 ? "Paper Ball" : "Wood Ball" : m_CurSel == 2 ? "Stone Ball" : "Box");
     }
 }
