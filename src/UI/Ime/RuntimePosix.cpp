@@ -32,7 +32,12 @@ bool PreparePresentationFrame(bool visible, PresentationFrame &frame) {
     return false;
 }
 
-bool IsPresentationActive() { return g_Visible; }
+bool IsPresentationActive() {
+    // This backend does not provide an IMM/TSF composition or candidate rail.
+    // ImGui's WantVisible only means an ordinary text field has focus; treating
+    // it as active composition disables Enter, completion and command history.
+    return false;
+}
 
 Diagnostics GetDiagnostics() {
     Diagnostics result;

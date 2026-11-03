@@ -188,8 +188,23 @@ namespace Bui {
         return keys;
     }
 
-    static bool GameNavigationKeyDown(const KeyboardInputBlockState &state) {
-        return ReadGameNavigationKeys(state) != 0;
+    static bool GameNavigationKeyPending(const KeyboardInputBlockState &state) {
+        InputHook *input = state.context ? state.context->GetInputManager() : nullptr;
+        if (!input)
+            return false;
+        for (const NavigationKeyBinding &binding : NavigationKeys) {
+            // The game also acts on IsKeyToggled (the release edge). Keep the
+            // block through that sample, otherwise Enter submits a console
+            // command and then activates the menu underneath when released.
+            // SDL queues ImGui events immediately, while the fixed-step game
+            // input manager consumes them at a simulation deadline. Both must
+            // have seen the release before handing input back to game scripts.
+            const bool uiDown = ImGui::GetCurrentContext() &&
+                                ImGui::GetKeyData(binding.imguiKey)->Down;
+            if (uiDown || input->oIsKeyDown(binding.gameKey) || input->oIsKeyToggled(binding.gameKey))
+                return true;
+        }
+        return false;
     }
 
     static bool RefreshNavigationKeyLocks(KeyboardInputBlockState &state) {
@@ -269,7 +284,7 @@ namespace Bui {
             InputHook *input = context->GetInputManager();
             if (!input)
                 return false;
-            if (GameNavigationKeyDown(state->second))
+            if (GameNavigationKeyPending(state->second))
                 return true;
 
             input->ReleaseBlock(token);
